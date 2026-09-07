@@ -38,6 +38,15 @@ If a fact fits two places, put it in one and link to it. Duplicated
 documentation does not stay duplicated - it stays in one place and rots in the
 other.
 
+## Agent context
+
+`CLAUDE.md` at the repository root is the operating manual for Claude Code:
+commands, the traps that have already cost time, the debugging protocol, and the
+git conventions. It is loaded automatically at the start of a session.
+
+It is not a substitute for these documents and holds no facts of its own - where
+the two overlap, `CLAUDE.md` points here. Keep it short; a long one gets skimmed.
+
 ## Conventions
 
 - **Wrap at 80 columns.** These files get read in a terminal beside the code.
