@@ -111,6 +111,14 @@ installed. On a normal machine, just use PlatformIO.
 
 ### Before the first flash
 
+If you have just cloned this, turn on the commit-time documentation gate. Git
+does not clone hooks, so without this it silently does nothing:
+
+```
+git config core.hooksPath .githooks
+```
+
+
 Set your BMS's MAC address in `include/config.h` (`CFG_BMS_MAC`). Leave it empty
 and the firmware attaches to the first JBD BMS it hears, which is fine in the
 driveway and wrong in a campground. The Overkill Solar / Xiaoxiang app shows the
