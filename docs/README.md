@@ -85,3 +85,28 @@ A change is not finished until:
 
 The test: could someone who has never seen this project reproduce your reasoning
 from the documents alone? If not, the change is not done.
+
+### Enforced at the commit
+
+`.githooks/pre-commit` refuses a commit that touches `src/`, `include/`, `lib/`,
+`tools/` or `platformio.ini` without touching any document. It prints the
+routing rule above and stops.
+
+It is a block rather than a warning on purpose. A warning is ignored; a block
+forces a decision. Plenty of commits genuinely need no documentation - a
+rename, a formatting pass - and those say so out loud:
+
+```
+SKIP_DOC_CHECK=1 git commit ...
+```
+
+Git hooks are not cloned. **After a fresh clone, run this once** or the gate
+silently does nothing:
+
+```
+git config core.hooksPath .githooks
+```
+
+The hook cannot tell whether the roadmap is *true*, only whether you looked. It
+catches the failure that actually happened here - `ROADMAP.md` claiming a
+blocker was open a day after it was closed - and nothing more.

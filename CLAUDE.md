@@ -67,6 +67,14 @@ immutable - supersede, do not rewrite.
   `Co-Authored-By`, `Generated with`, or any other attribution trailer.
 - Do not commit or push unless asked.
 - `.pio/` is ignored: 223 MB of regenerable toolchain.
+- **A commit touching `src/`, `include/`, `lib/`, `tools/` or `platformio.ini`
+  must touch a document too.** `.githooks/pre-commit` enforces it and prints
+  the routing rule. Use `SKIP_DOC_CHECK=1 git commit` only when the change
+  genuinely documents nothing, and say why in the commit message.
+- When a change closes a `ROADMAP.md` item, **move it to that file's `Done`
+  section with the date** rather than deleting the line, and renumber what is
+  left - stale numbering is how the roadmap stopped being trustworthy before.
+- After a fresh clone: `git config core.hooksPath .githooks`.
 
 ## Architecture in one paragraph
 
