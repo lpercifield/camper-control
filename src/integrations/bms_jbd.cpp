@@ -12,6 +12,11 @@ constexpr uint32_t kRefreshMs = 500;
 constexpr uint32_t kParamsDelayMs = 1500;  // let the first replies land first
 }  // namespace
 
+// Nothing runs here. Bluedroid's connect() is synchronous and blocked the
+// cooperative loop for 1.5-6 s whenever the BMS was absent, which stopped the
+// touch controller being polled and read to a user as taps being ignored.
+// ARCHITECTURE.md's escape hatch applies: own a task, publish through entities.
+// See docs/decisions/0008.
 JbdBms& bms() {
   static JbdBms instance;
   return instance;
@@ -46,10 +51,40 @@ bool JbdBms::begin() {
   ble_.setTimeout(10);
   bleStarted_ = true;
   setLink(LinkState::Searching, "looking for BMS");
+
+  // Core 0. The Arduino loop - and therefore LVGL and the touch input - runs on
+  // core 1, so a blocking BLE call here cannot stall the UI even in principle.
+  // Priority 1 matches the Arduino loop task; being on another core, it is not
+  // competing with it anyway.
+  const BaseType_t ok = xTaskCreatePinnedToCore(
+      &JbdBms::taskEntry, "bms_jbd", 8192, this, 1, &task_, 0);
+  if (ok != pdPASS) {
+    log_e("could not start the BMS task - falling back to no BMS");
+    return false;
+  }
   return true;
 }
 
-void JbdBms::loop() {
+void JbdBms::taskEntry(void* self) { static_cast<JbdBms*>(self)->taskLoop(); }
+
+void JbdBms::taskLoop() {
+  uint32_t lastStackReport = 0;
+  for (;;) {
+    service();
+
+    // 8192 bytes was a guess. Report the headroom occasionally so it can be
+    // tuned against evidence rather than left oversized on a board with ~67 KB
+    // of free heap.
+    if (millis() - lastStackReport > 30000) {
+      lastStackReport = millis();
+      log_i("bms task stack headroom: %u bytes",
+            (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void JbdBms::service() {
   if (!bleStarted_) return;
 
   ble_.bleLoop();

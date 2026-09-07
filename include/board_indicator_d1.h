@@ -59,7 +59,11 @@
 #define I2C_FREQ_HZ 400000
 
 #define PCA9535_I2C_ADDR 0x20
-#define TOUCH_I2C_ADDR   0x38  // FT6336 / FT5x06 family
+// 0x48, not the 0x38 the FT6336 datasheet and every community pin map give.
+// Confirmed 2026-09-06 by bus scan and by decoding live touches: the register
+// layout is the usual FT5x06/FT6x36 one (0x02 point count, 0x03..0x06 the first
+// point) and coordinates land inside 0..479. See docs/HARDWARE.md.
+#define TOUCH_I2C_ADDR   0x48  // FT5x06/FT6x36-compatible, non-standard address
 
 // PCA9535 port pins (port 0 = bits 0-7, port 1 = bits 8-15)
 #define EXP_LORA_CS    0

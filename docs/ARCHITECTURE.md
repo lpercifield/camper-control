@@ -109,9 +109,27 @@ Healthy is roughly **46,000 iterations/sec and ~48 LVGL flushes/sec**. Those
 numbers are the fastest way to tell whether something is blocking: if the loop
 count stops climbing, an integration is stuck.
 
-There are no FreeRTOS tasks of our own. Anything that genuinely must block gets
-its own task and publishes back through entities - that is the escape hatch, and
-it has not been needed yet.
+`Hub::loop` times each integration and logs any that exceeds
+`Hub::kSlowLoopWarnMs` (50 ms) by name. Rule 1 went unenforced until it was
+violated; this is how you find out which integration is at fault rather than
+inferring it from a frozen screen.
+
+### The one exception
+
+**`JbdBms` runs on its own FreeRTOS task**, pinned to core 0 while the Arduino
+loop runs on core 1. Bluedroid's `connect()` is synchronous and blocked the
+cooperative loop for up to six seconds whenever the BMS was absent, which
+stopped the touch controller being polled. See `decisions/0008`.
+
+This is the escape hatch, taken once. The cooperative loop remains the default;
+a second integration should not copy this by reflex.
+
+It means entities are written from one context and read from another. Aligned
+32-bit loads and stores are atomic on this target, so a single reading cannot
+tear - what you can see is a set of values from adjacent cycles, which is
+invisible at 4 Hz. Anything richer than a scalar needs more care: `Alarms`
+publishes a table slot only after filling it, behind a barrier, because
+incrementing the count first let a reader reach a slot with a null id.
 
 ## What the UI may do
 

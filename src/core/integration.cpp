@@ -33,7 +33,16 @@ void Hub::begin() {
 
 void Hub::loop() {
   for (Integration* i : integrations_) {
+    const uint32_t t0 = millis();
     i->loop();
+    const uint32_t elapsed = millis() - t0;
+    // ARCHITECTURE.md rule 1 says loop() returns promptly, and nothing enforced
+    // it. A stalled integration presents as missed touches and a frozen UI,
+    // which is a miserable thing to diagnose from the symptom, so name it here.
+    if (elapsed > kSlowLoopWarnMs) {
+      log_w("integration '%s' held the loop for %lu ms", i->name(),
+            (unsigned long)elapsed);
+    }
   }
 }
 

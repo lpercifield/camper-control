@@ -125,32 +125,6 @@ void scanI2C(const char* when) {
   log_i("i2c scan (%s): %d device(s) %s", when, n, n ? found : "- bus empty");
 }
 
-// BRING-UP EXPERIMENT (docs/ROADMAP.md). 0x48 answers on the bus and we do not
-// know what it is. Dump its first registers; if the bytes move when the screen
-// is touched, it is the touch controller and the pin map named the wrong part.
-void probeUnknown(uint8_t addr) {
-  uint8_t reg[12] = {0};
-  Wire.beginTransmission(addr);
-  Wire.write((uint8_t)0x00);
-  if (Wire.endTransmission(false) != 0) {
-    log_w("probe 0x%02X: no ack on register write", addr);
-    return;
-  }
-  const int got = Wire.requestFrom((int)addr, (int)sizeof(reg));
-  for (int i = 0; i < got && i < (int)sizeof(reg); i++) reg[i] = Wire.read();
-
-  // Only speak up when something moves. That way a touch at any moment leaves a
-  // record, with no need to synchronise a capture with a finger.
-  static uint8_t prev[sizeof(reg)] = {0};
-  static bool seeded = false;
-  if (seeded && memcmp(prev, reg, sizeof(reg)) == 0) return;
-  seeded = true;
-  memcpy(prev, reg, sizeof(reg));
-  log_w("CHANGE 0x%02X [%d]: %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X %02X",
-        addr, got, reg[0], reg[1], reg[2], reg[3], reg[4], reg[5],
-        reg[6], reg[7], reg[8], reg[9], reg[10], reg[11]);
-}
-
 uint16_t* allocBuffer(uint32_t pixels) {
   uint16_t* p = static_cast<uint16_t*>(
       heap_caps_malloc(pixels * sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -222,24 +196,9 @@ bool displayBegin() {
   setBacklight(CFG_BACKLIGHT_DEFAULT);
 
   if (!g_touch.begin(Wire, g_expander)) {
+    // Second scan: if the controller is not answering, this says whether it is
+    // absent from the bus entirely or merely at a different address.
     scanI2C("after touch reset");
-
-    // BRING-UP EXPERIMENT (docs/ROADMAP.md). The expander's pins power up as
-    // inputs, so any reset line we have not claimed is floating - and a touch
-    // controller whose reset floats low never comes out of reset. If our
-    // EXP_TOUCH_RST guess is wrong, the real one is still floating.
-    //
-    // Drive every pin high except 4 and 5, which are the LCD's chip select and
-    // reset and would disturb a panel that is already running. If 0x38 appears
-    // afterwards, the reset is one of these and we can bisect for it. If it
-    // does not, the controller is not on this bus at all.
-    for (uint8_t pin = 0; pin < 16; pin++) {
-      if (pin == EXP_LCD_CS || pin == EXP_LCD_RST) continue;
-      g_expander.setDirection(pin, false);
-      g_expander.write(pin, true);
-    }
-    delay(300);
-    scanI2C("all expander pins driven high");
   }
 
   // ---- LVGL ----
@@ -272,13 +231,6 @@ bool displayBegin() {
 void displayLoop() {
   g_loopCount++;
   lv_timer_handler();
-
-  // TEMPORARY: watch the unidentified device while the screen is touched.
-  static uint32_t lastProbe = 0;
-  if (!g_touch.present() && millis() - lastProbe > 400) {
-    lastProbe = millis();
-    probeUnknown(0x48);
-  }
 
   // TEMPORARY bring-up heartbeat.
   static uint32_t lastBeat = 0;

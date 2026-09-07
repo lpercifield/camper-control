@@ -102,12 +102,28 @@ framebuffer reads, comfortably inside octal PSRAM's budget.
 
 ## Touch
 
-FT6336 at `0x38`, reset and interrupt lines on the IO expander.
+**The controller answers at `0x48`, not the `0x38` every FT6336 datasheet and
+community pin map gives.** That single wrong constant is why touch appeared
+dead for days.
 
-**Currently not detected.** `touch.cpp:begin` logs `touch controller not found
-at 0x38` on every boot and the firmware continues headless - a dead touch panel
-is not fatal, but the screen is unusable without it. This is the top open
-hardware item; see `ROADMAP.md`.
+Established 2026-09-06 by three experiments, in this order:
+
+1. A bus scan finds `0x20` (the expander) and `0x48`. No `0x38`, ever.
+2. The expander answers and `EXP_TOUCH_INT` idles high, so the expander path and
+   the interrupt line are both sound.
+3. Driving *every* expander pin high - in case the real reset line was floating
+   on a pin we never claimed - changed nothing. The controller was never held in
+   reset; it was simply at a different address.
+
+It speaks the ordinary FT5x06/FT6x36 data layout - `0x02` point count, `0x03`
+and `0x04` X, `0x05` and `0x06` Y, with the event flag in the top two bits of
+`0x03` - so `Touch::read` needed no changes at all once the address was right.
+Decoded live touches land inside 0..479 on both axes.
+
+It is **not** a FocalTech part despite the layout: the identity and power
+registers (`0x86`-`0x89`, `0xA3`, `0xA6`, `0xA8`) all read `0x00`, so there is
+no monitor mode to configure and no vendor id to check. Treat the data
+registers as the only documented surface.
 
 `CFG_TOUCH_MIRROR_X` and `_Y` are both on, matching the ESPHome definition for
 this board, and must stay consistent with the rotation setting above. **Both are

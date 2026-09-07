@@ -48,6 +48,10 @@ class Integration {
 // block, it gets its own FreeRTOS task and posts results back through entities.
 class Hub {
  public:
+  // Anything above this is long enough for a person to notice the UI stop
+  // responding, so it gets logged with the name of whoever caused it.
+  static constexpr uint32_t kSlowLoopWarnMs = 50;
+
   static Hub& instance();
 
   void add(Integration* i);

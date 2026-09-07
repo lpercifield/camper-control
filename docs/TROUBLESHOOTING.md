@@ -155,6 +155,29 @@ for a two-character string, so `100%` later hangs off to the right. Re-align
 after setting the text, or give the label a fixed box and centre the text
 inside it.
 
+## Touch
+
+**Taps intermittently ignored, but touch basically works.** The digitiser is
+fine; the firmware is not looking. `Hub::loop` logs any integration that holds
+the loop past 50 ms:
+
+```
+integration 'JBD BMS' held the loop for 6010 ms
+```
+
+`Touch::read` is called from LVGL's input timer inside the same cooperative
+loop, so a stalled integration stops touch being polled at all. Confirm by
+correlating the heartbeat: a healthy window is ~80,000 loops and 96 flushes per
+two seconds, and a stalled one shows single digits.
+
+The instance we hit was Bluedroid's synchronous `connect()` retrying against an
+absent BMS. Fixed by moving that integration to its own task -
+`decisions/0008`.
+
+**Touch not detected at all.** Scan the bus before assuming a dead controller;
+`displayBegin` logs `i2c scan (boot)` at every startup. This board's controller
+is at `0x48`, not the `0x38` its datasheet family uses. See `HARDWARE.md`.
+
 ## Data
 
 **Cell bars blink on and off** - `query_0x04_cell_voltages()` in the vendored

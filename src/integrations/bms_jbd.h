@@ -1,6 +1,8 @@
 #pragma once
 #include <BleSerialClient.h>
 #include <bms2.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "core/entity.h"
 #include "core/integration.h"
@@ -26,7 +28,9 @@ class JbdBms : public Integration {
  public:
   const char* name() const override { return "JBD BMS"; }
   bool begin() override;
-  void loop() override;
+  // Deliberately does nothing - see the comment on the definition. The work
+  // happens on this integration's own task. See docs/decisions/0008.
+  void loop() override {}
 
   const CellData& cells() const { return cells_; }
   const char* statusLine() const;
@@ -39,6 +43,11 @@ class JbdBms : public Integration {
   float cellUnderV() const { return cellUnderV_; }
 
  private:
+  static void taskEntry(void* self);
+  void taskLoop();
+  // One pass of the old cooperative loop. Free to block now: it runs on our
+  // task, pinned to the core the Arduino loop does not use.
+  void service();
   void refresh();
   // One parameter per pass: each of these is a blocking BLE round trip that
   // enters and leaves the BMS's factory mode, so reading all six at once would
@@ -50,6 +59,7 @@ class JbdBms : public Integration {
   BleSerialClient ble_;
   OverkillSolarBms2 bms_;
   CellData cells_;
+  TaskHandle_t task_ = nullptr;
 
   bool bleStarted_ = false;
   bool bmsAttached_ = false;

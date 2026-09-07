@@ -16,8 +16,17 @@ Alarm* Alarms::findOrCreate(const char* id) {
     log_e("alarm table full, dropping '%s'", id);
     return nullptr;
   }
-  Alarm* a = &table_[count_++];
+  // Alarms are now raised from the BMS task while the UI reads them from the
+  // main loop. Fill the slot completely before publishing it, or a reader can
+  // see a slot that count_ says exists but whose id is still null.
+  Alarm* a = &table_[count_];
   a->id = id;
+  a->text = nullptr;
+  a->severity = Severity::Info;
+  a->active = false;
+  a->sinceMs = 0;
+  __sync_synchronize();
+  count_++;
   return a;
 }
 

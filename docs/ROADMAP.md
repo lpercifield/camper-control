@@ -8,53 +8,34 @@ Runs on hardware. Boots, drives the panel, connects to the JBD BMS over BLE and
 displays live pack data. Flash 61%, static RAM 37.5%, ~65-70 KB free heap. Main
 loop ~46k iterations/sec, LVGL ~48 flushes/sec.
 
-Not yet usable unattended: **touch does not work**, so the four-domain
-navigation cannot be driven.
+Touch works and the four-domain navigation is drivable. The BMS link is the
+weak point: it is not currently connecting, and `CFG_BMS_MAC` is still unset.
 
 ## Blockers
 
-**1. Touch controller: the pin map is wrong.** Not a timing or reset problem.
-Three experiments on 2026-09-06 established it:
-
-- Bus scan finds `0x20` (the expander) and `0x48`. There is **no `0x38`**.
-- The expander answers, and `EXP_TOUCH_INT` idles high, so the expander path is
-  sound.
-- Driving *every* expander pin high - in case the real reset line was floating
-  on a pin we never claimed - changed nothing.
-
-So the controller is either not an FT6336, or not on this bus.
-`board_indicator_d1.h` says its pin map came from community sources, and this is
-the part that did not survive contact.
-
-`0x48` is unidentified and reads as twelve stable zero bytes, which is what a
-capacitive touch controller reports with nothing touching it. **Next step: touch
-the screen while the firmware watches `0x48` for changes.** The probe is in
-`display.cpp:probeUnknown` and logs only on change, so the touch and the capture
-do not have to be synchronised.
-
-**2. `CFG_BMS_MAC` is empty.** The firmware attaches to the first device
+**1. `CFG_BMS_MAC` is empty.** The firmware attaches to the first device
 advertising service `ff00`. Fine on a bench, wrong in a campground. Needs the
 address, which the log prints once connected.
 
 ## Design gaps
 
-**3. `Domain::System` has no page.** The enum and `domainName()` know about it;
+**2. `Domain::System` has no page.** The enum and `domainName()` know about it;
 `kNavDomains` does not. Anything registered there - uptime, heap, link health,
 exactly the diagnostics that would have shortened this week - is silently
 invisible. A trap for the next integration author.
 
-**4. No persistence.** Every setting is a compile-time constant, so changing the
+**3. No persistence.** Every setting is a compile-time constant, so changing the
 BMS MAC means a reflash. NVS-backed settings behind a Settings page is the
 largest gap between "working firmware" and "thing you live with", and wants
 designing before more constants accumulate.
 
-**5. No tests, no CI.** `src/core/` - entity formatting, registry lookup, alarm
+**4. No tests, no CI.** `src/core/` - entity formatting, registry lookup, alarm
 severity and silencing - is pure logic with no hardware dependency. A PlatformIO
 `platform = native` environment would test it on a laptop in seconds. For a
 codebase whose premise is "adding integrations should be safe", this is the
 highest-leverage missing piece.
 
-**6. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
+**5. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
 looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
 ## Smaller things
@@ -77,10 +58,24 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
 - **Alarm slots are never reclaimed.** `count_` only grows and `clear()` just
   sets `active = false`. Fine while ids are static literals, which they must be
   anyway - but the constraint should be stated where `raise()` is declared.
-- **Bluedroid `connect()` is synchronous**, costing ~2s per failed retry and
-  stuttering the loop whenever the BMS is absent.
+- **Free heap is down to ~55 KB** from ~67 KB, the cost of the BMS task's 8 KB
+  stack. `taskLoop()` reports its high-water mark every 30 s; tune the size
+  against that rather than leaving the guess in place. NimBLE would return
+  30-40 KB - see `decisions/0003`.
 
 ## Done
+
+- **Touch working** (2026-09-07). The controller answers at `0x48`, not the
+  `0x38` its datasheet family uses; `Touch::read` needed no changes once the
+  address was right. Axis mirroring is confirmed by use. See `HARDWARE.md`.
+- **The BMS integration owns a task** (2026-09-07). Bluedroid's synchronous
+  `connect()` was blocking the cooperative loop for 1.5-6 s per retry and
+  stopping touch being polled, which read to a user as taps being ignored.
+  Loop stalls went from five per 30 s to none, touch polling from 3-6/s back to
+  a steady 28/s. See `decisions/0008`.
+- **`Hub::loop` names slow integrations** (2026-09-07). Rule 1 of
+  `ARCHITECTURE.md` was unenforced; it now logs any integration holding the
+  loop past 50 ms. This is what found the bug above.
 
 - **Arduino_GFX bounce-buffer patch made durable** (2026-09-07).
   `tools/patch_gfx.py` applies it as a PlatformIO `pre:` script; verified by
@@ -107,12 +102,11 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
 
 ## Suggested order
 
-1. Identify `0x48` and get touch working (1). Without it there is no UI.
-2. Set `CFG_BMS_MAC` (2). One line, once the address is known.
-3. Add the `native` test environment (5). Cheapest insurance before growth.
-4. Add the System page (3), and move the heartbeat and bus scan into it.
-5. Resolve the build-system split (6).
-6. NVS-backed settings (4).
-7. NimBLE, once the port is proven and the RAM is needed.
+1. Get the BMS connecting again, and set `CFG_BMS_MAC` (1).
+2. Add the `native` test environment (4). Cheapest insurance before growth.
+3. Add the System page (2), and move the heartbeat and bus scan into it.
+4. Resolve the build-system split (5).
+5. NVS-backed settings (3).
+6. NimBLE - now also the answer to the heap the BMS task consumed.
 
-1-2 make the device work. 3-5 make it safe to change. 6-7 make it a product.
+1 makes the device useful. 2-4 make it safe to change. 5-6 make it a product.
