@@ -62,6 +62,13 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
 ## Smaller things
 
+- **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
+  Wi-Fi and Networking stack purely to call `WiFi.macAddress()` for the BLE
+  device name, and that include is the only reason `platformio.ini` carries the
+  `Network` lib_deps and `-I` workaround. `NimBLEDevice::getAddress()` returns
+  the same thing. Removing the include should let the workaround go with it -
+  worth doing before Wi-Fi lands for real, so the dependency is deliberate
+  rather than accidental.
 - **Bring-up scaffolding is still in `src/bsp/display.cpp`**: the loop/flush
   heartbeat and `scanI2C`. The expander sweep and the `0x48` probe are gone,
   having answered their question. These two are worth keeping in some form -
@@ -81,10 +88,11 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   sets `active = false`. Fine while ids are static literals - which they must be
   anyway, and now doubly so, since alarms are raised from the BMS task and read
   from the main loop. State the constraint where `raise()` is declared.
-- **Free heap is down to ~55 KB** from ~67 KB, the cost of the BMS task's 8 KB
-  stack. `taskLoop()` reports its high-water mark every 30 s; tune the size
-  against that rather than leaving the guess in place. NimBLE would return
-  30-40 KB - see `decisions/0003`.
+- **The BMS task's stack is oversized.** 8 KB allocated, and `taskLoop()`
+  reports 6,044 bytes of headroom - about 2 KB actually used. It could drop to
+  4 KB, but with ~97 KB free since the NimBLE port there is no reason to take
+  that risk yet. The reporting stays so the decision can be evidence-based
+  whenever RAM matters again.
 
 ## Done
 

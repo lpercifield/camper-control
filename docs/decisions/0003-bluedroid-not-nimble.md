@@ -1,7 +1,7 @@
 # 0003 - Bluedroid rather than NimBLE, for now
 
 - **Date:** 2026-09-06 (recorded; decided during the port, 2026-09-02)
-- **Status:** Accepted
+- **Status:** Superseded by 0010 (2026-09-07)
 
 ## Context
 
@@ -28,3 +28,7 @@ cooperative loop on every retry when the BMS is absent.
 
 Revisit once the BMS link is reliably online, or as soon as a second BLE device
 is needed - that is the point where the RAM has to come from somewhere.
+
+**That point arrived on 2026-09-07.** The port is in `decisions/0010`; it
+returned 40 KB of heap and 400 KB of flash, and the deferral recorded here no
+longer applies.

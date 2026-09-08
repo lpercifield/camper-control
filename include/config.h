@@ -19,8 +19,10 @@
 #define CFG_BACKLIGHT_IDLE_MS 120000UL  // 0 would mean never sleep
 
 // ---- Battery / BMS ----------------------------------------------------------
-// Leave empty to connect to the first JBD/Overkill BMS found. In a campground
-// full of other people's batteries, pin it to your own MAC address, e.g.
+// A seed, not a commitment. The address of the last BMS that connected is saved
+// in NVS and takes precedence over this, so in practice you never need to set
+// it - let the firmware find the battery once and it will remember. Forgetting
+// it on the Settings page returns to attaching to the first JBD BMS heard.
 //   #define CFG_BMS_MAC "a4:c1:38:11:22:33"
 #define CFG_BMS_MAC ""
 

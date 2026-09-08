@@ -170,9 +170,10 @@ loop, so a stalled integration stops touch being polled at all. Confirm by
 correlating the heartbeat: a healthy window is ~80,000 loops and 96 flushes per
 two seconds, and a stalled one shows single digits.
 
-The instance we hit was Bluedroid's synchronous `connect()` retrying against an
-absent BMS. Fixed by moving that integration to its own task -
-`decisions/0008`.
+The instance we hit was a synchronous `connect()` retrying against an absent
+BMS. Fixed by moving that integration to its own task - `decisions/0008`. The
+NimBLE port did not change that: connect is still synchronous, and the task is
+what keeps it off the UI core.
 
 **Touch not detected at all.** Scan the bus before assuming a dead controller;
 `displayBegin` logs `i2c scan (boot)` at every startup. This board's controller
@@ -190,10 +191,20 @@ The giveaway was that the min/max/spread summary stayed on screen while the bars
 vanished: those are only written when at least one cell reads non-zero, so they
 latched while `volts[]` was being clobbered.
 
-**Connected but no data at all** (`getLength head: 0 tail: 0` forever) - the
-client attached but notifications are not arriving. Check that `CFG_BMS_MAC` is
-set; with it empty the firmware takes the first device advertising service
-`ff00`, which in a campground is somebody else's battery.
+**Connected but no data at all** - the client attached but notifications are
+not arriving. Confirm it attached to *your* battery: the boot log prints
+`BMS target <address>`, which comes from the address saved in NVS. If that is
+empty the firmware takes the first device advertising service `ff00`, which in
+a campground is somebody else's pack; the Settings page shows and clears it.
 
 **BMS connects, then will not reconnect** - a JBD BMS accepts one client at a
 time. The Xiaoxiang/Overkill phone app will hold it. Close the app.
+
+**`connect failed, reason 574`** or similar. NimBLE encodes HCI errors as
+`0x200 + code`, so 574 is `0x23e` - HCI `0x3e`, "connection failed to be
+established". It is common and transient; the client retries the connect a few
+times against the address it already has before paying for a rescan. Bluedroid
+reported this as `Unknown ESP_ERR error`, which is why it was undiagnosable
+before `decisions/0010`.
+
+To decode any other reason: subtract 512 and look up the HCI error code.

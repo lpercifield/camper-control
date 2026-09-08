@@ -24,6 +24,9 @@
 
      Alarms (src/core/alarms.*) sits beside the registry: integrations
      raise and clear by name, the UI shows the worst active one.
+
+     Settings (src/core/settings.*) sits beside both: the only thing that
+     persists anything, and the only writer of flash.
 ```
 
 The arrows only point one way. **Nothing in the UI talks to hardware**, and
@@ -132,9 +135,13 @@ inferring it from a frozen screen.
 ### The one exception
 
 **`JbdBms` runs on its own FreeRTOS task**, pinned to core 0 while the Arduino
-loop runs on core 1. Bluedroid's `connect()` is synchronous and blocked the
+loop runs on core 1. The BLE stack's `connect()` is synchronous and blocked the
 cooperative loop for up to six seconds whenever the BMS was absent, which
 stopped the touch controller being polled. See `decisions/0008`.
+
+The NimBLE port (`decisions/0010`) did not remove the need for this: connect is
+still synchronous in the form we call, and the task now also keeps the BLE work
+off the core the UI runs on.
 
 This is the escape hatch, taken once. The cooperative loop remains the default;
 a second integration should not copy this by reflex.
@@ -171,12 +178,13 @@ it, because the crew could not have seen what was under their finger.
 
 ## Memory
 
-The tight resource is **internal RAM**, not flash. At the time of writing: 2.0 MB
-of the 3.3 MB app partition, 123 KB static RAM, and roughly 65-70 KB of free
-heap after boot.
+The tight resource is **internal RAM**, not flash. Measured 2026-09-07 after
+the NimBLE port: 1.6 MB of the 3.3 MB app partition, 107 KB static RAM, and
+~97 KB of free heap after boot.
 
 Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 48 KB
-pool (`LV_MEM_SIZE`), Bluedroid, and the BMS task's 8 KB stack.
+pool (`LV_MEM_SIZE`), the NimBLE host, and the BMS task's 8 KB stack - of which
+about 2 KB is actually used, so it is oversized on purpose while there is room.
 
 ### Wi-Fi does not currently fit
 

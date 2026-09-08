@@ -35,7 +35,8 @@ the Xtensa half. Budget fifteen minutes. Subsequent builds are about a minute.
 
 Arduino core 3.1.2, via the pioarduino platform fork (PlatformIO's own
 espressif32 platform still ships core 2.x, and Arduino_GFX 1.5.3 needs ESP-IDF
-5.x). LVGL reads `include/lv_conf.h`, generated from the 9.2.2 template - that
+5.x). BLE is NimBLE-Arduino rather than the core's Bluedroid stack, which is
+worth 40 KB of heap and 400 KB of flash - see `docs/decisions/0010`. LVGL reads `include/lv_conf.h`, generated from the 9.2.2 template - that
 file's header lists the four settings that differ from stock.
 
 ### Which port
@@ -130,12 +131,16 @@ address, or leave it empty for one boot and read it off the serial log.
 include/board_indicator_d1.h   pin map for the Indicator D1
 include/config.h               everything you tune while commissioning
 src/bsp/                       panel, touch, IO expander, LVGL bring-up
-src/core/                      entities, registry, integrations, alarms
+src/core/                      entities, registry, integrations, alarms,
+                               NVS-backed settings
 src/integrations/bms_jbd.*     the JBD BMS over BLE
-src/ui/                        LVGL screens
+src/ui/                        LVGL screens and the settings overlay
 lib/OverkillSolarBMS/          vendored BMS protocol library
-lib/BleSerialClient/           vendored BLE serial client (patched)
-tools/                         arduino-cli build harness, Linux only (see above)
+lib/BleSerialClient/           vendored BLE serial client, ported to NimBLE
+tools/patch_gfx.py             build-time Arduino_GFX patch (required)
+tools/readlog.py               serial capture
+tools/build.sh                 arduino-cli build harness, Linux only, unmaintained
+.githooks/pre-commit           refuses undocumented firmware changes
 ```
 
 ## How it fits together
@@ -169,8 +174,12 @@ belongs, and what "done" means for a change. Start there.
 
 ## Status
 
-Compiles clean under PlatformIO - flash 61.0% (2,038,688 of 3,342,336 bytes),
-static RAM 37.5% (122,932 of 327,680), and one narrowing warning out of the
-vendored Arduino_GFX. It has **not run on hardware yet**;
-`docs/PORTING_NOTES.md` lists what to check on first boot, in order. Work that
-list top to bottom rather than changing several things at once.
+**Runs on hardware.** Boots, drives the panel, reads touch, connects to the
+JBD BMS over BLE and displays live pack data. Settings persist across a power
+cycle. Flash 49.2% (1,645,040 of 3,342,336 bytes), static RAM 32.6% (106,964 of
+327,680), ~97 KB of free heap, and one narrowing warning out of the vendored
+Arduino_GFX.
+
+`docs/ROADMAP.md` is what is left. `docs/PORTING_NOTES.md` records what the
+first boot actually taught us, which is worth reading before touching the
+display or the BLE client.

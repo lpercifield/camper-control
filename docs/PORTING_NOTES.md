@@ -85,10 +85,21 @@ BLE client needed exactly one change for it (`BLEAddress::toString()` returns
 `String` rather than `std::string`), and the backlight moved to core 3.x's
 pin-based `ledcAttach()`.
 
-## Untested - check these on first boot
+## What the first boot actually taught us
 
-It compiles, and it has never run. Every hardware assumption below is still an
-assumption, so work through them in this order:
+This section used to say "it compiles, and it has never run". It has run, on
+2026-09-06 and since. Recorded here as history because the order these were
+worked through is the reason any of them were found.
+
+**Settled by observation:** the panel comes up, the orientation flag is
+correct, colours are right (no big-endian swap needed), and the draw buffers
+allocate in internal RAM as intended. The touch controller was the one that
+did not survive contact - it answers at `0x48`, not the `0x38` the pin map
+assumed, which cost two days. See `HARDWARE.md`.
+
+**Still unverified:** expander pins 9 and 10, which nothing drives.
+
+The original list, for the record:
 
 - **Panel comes up at all.** If the screen stays black, the suspect is the LCD
   chip-select on the IO expander (`EXP_LCD_CS`, PCA9535 pin 4) - the panel's CS
@@ -102,9 +113,10 @@ assumption, so work through them in this order:
   they must stay consistent with the rotation setting above.
 - **Colour order.** If everything is blue-tinted, the panel wants big-endian
   pixels: pass `useBigEndian = true` to `Arduino_ESP32RGBPanel`.
-- **Memory.** Two 480x40 draw buffers live in internal RAM alongside Bluedroid.
-  If allocation falls back to PSRAM (there is a log line for it) the UI will
-  feel sluggish; drop `kBufLines` in `display.cpp`.
+- **Memory.** Two 480x40 draw buffers live in internal RAM alongside the BLE
+  host. If allocation falls back to PSRAM (there is a log line for it) the UI
+  will feel sluggish; drop `kBufLines` in `display.cpp`. This has not happened,
+  and there is far more headroom since the NimBLE port.
 - **Expander pins 9 and 10** in `board_indicator_d1.h` are guesses carried from
   community pin maps and are not driven by this firmware. Confirm against your
   board before using them.
@@ -116,9 +128,13 @@ assumption, so work through them in this order:
   sound. `serviceAlarmOutput()` in `main.cpp` is the hook; it logs today.
 - **The RP2040 is idle.** On a D1 there are no onboard sensors to read, but the
   co-processor still owns the buzzer, the SD slot and the Grove ports.
-- **Bluedroid, not NimBLE.** NimBLE would free roughly 30-40 KB of RAM and is the
-  obvious move once the port is proven, but it changes every callback signature
-  in `BleSerialClient`. Doing both at once would have made a failure ambiguous.
-- **One connection.** The BLE client tracks a single peer, so a second BLE device
-  (a Victron shunt, say) needs its own client rather than a second call into this
-  one.
+- **One connection, and one scanner.** The client tracks a single peer, so a
+  second connectable BLE device needs its own client. Worse for the planned
+  temperature sensors: the scanner belongs to `BleSerialClient` and stops while
+  connected, so a broadcast-only sensor receives nothing. `ROADMAP.md` carries
+  this as the shared-scanner item.
+- **`WiFi.h` is included for one line.** `bms_jbd.cpp` pulls in the whole Wi-Fi
+  and Networking stack to call `WiFi.macAddress()` for the BLE device name, and
+  that is the only reason `platformio.ini` carries the `Network` workaround.
+  Since the NimBLE port, `NimBLEDevice::getAddress()` gives the same thing
+  directly - removing the include should let the workaround go too.

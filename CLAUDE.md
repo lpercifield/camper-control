@@ -66,7 +66,7 @@ immutable - supersede, do not rewrite.
 - **Commits are authored by the repository owner alone.** Do not add
   `Co-Authored-By`, `Generated with`, or any other attribution trailer.
 - Do not commit or push unless asked.
-- `.pio/` is ignored: 223 MB of regenerable toolchain.
+- `.pio/` is ignored: ~230 MB of regenerable build output and packages.
 - **A commit touching `src/`, `include/`, `lib/`, `tools/` or `platformio.ini`
   must touch a document too.** `.githooks/pre-commit` enforces it and prints
   the routing rule. Use `SKIP_DOC_CHECK=1 git commit` only when the change
@@ -79,7 +79,15 @@ immutable - supersede, do not rewrite.
 ## Architecture in one paragraph
 
 Integrations own devices and publish entities into a registry; screens read the
-registry and never touch hardware. One cooperative loop, no tasks of our own,
-so **any blocking call inside an integration freezes the whole UI** - that has
-happened and it presents as a blank screen with no crash. Full contracts in
-`docs/ARCHITECTURE.md`; adding an accessory is `docs/ADDING_AN_INTEGRATION.md`.
+registry and never touch hardware. One cooperative loop, so **any blocking call
+inside an integration freezes the whole UI** - that has happened and it presents
+as a blank screen with no crash. `Hub::loop` now logs any integration that holds
+the loop past 50 ms, by name.
+
+One exception: `JbdBms` owns a FreeRTOS task on core 0, because the BLE connect
+is synchronous (`decisions/0008`). That makes entities cross-context; all NVS
+writes still happen on the main loop via `Settings`. BLE is NimBLE, not
+Bluedroid (`decisions/0010`).
+
+Full contracts in `docs/ARCHITECTURE.md`; adding an accessory is
+`docs/ADDING_AN_INTEGRATION.md`.
