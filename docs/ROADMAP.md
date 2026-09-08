@@ -26,7 +26,27 @@ outright and stops it while connected, so a second consumer receives nothing.
 `NimBLEDevice::getScan()` needs to become shared infrastructure that dispatches
 advertisements to registered listeners, with the BLE client as one of them.
 Prefer broadcast sensors over connectable ones; a connectable sensor competes
-for a connection slot, a broadcasting one costs nothing but scan time.
+for a connection slot, a broadcasting one costs nothing but scan time. That
+rules out most Inkbird models, which require a connection.
+
+Shortlist from the 2026-09-07 survey, nothing bought yet:
+
+- **Indoor: Xiaomi LYWSD03MMC with ATC/pvvx firmware**, ~$5-8. Stock firmware
+  encrypts its beacons; the community firmware reflashes over BLE from a
+  browser - no hardware, no soldering - and then broadcasts temperature,
+  humidity and battery in a documented format. The default answer for ESP32
+  projects. CR2032, roughly a year.
+- **Outdoor: RuuviTag**, ~$30-40. Open published format, no reflashing, rated
+  well below freezing, IP67 on the weatherproof variants. The price is the
+  objection; the cold tolerance is the reason. A CR2032 sags badly below
+  freezing, so an indoor-grade tag outside reads fine in autumn and dies in
+  February.
+- **No-reflash alternatives:** Govee H5075 (~$12, format community-derived but
+  stable), SwitchBot Meter (~$15, vendor-documented), or the older round Mijia
+  LYWSDCGQ which broadcasts unencrypted in stock firmware and runs on AAA -
+  better in cold than a coin cell.
+
+None of this can receive a single packet until the shared scanner exists.
 
 **3. `Domain::System` has no page.** The enum and `domainName()` know about it;
 `kNavDomains` does not. Anything registered there - uptime, heap, link health,
