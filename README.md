@@ -113,7 +113,9 @@ installed. On a normal machine, just use PlatformIO.
 ### Before the first flash
 
 If you have just cloned this, turn on the commit-time documentation gate. Git
-does not clone hooks, so without this it silently does nothing:
+does not clone hooks, so without this it silently does nothing - and a hook
+that silently does nothing is worse than no hook, because you believe you are
+covered:
 
 ```
 git config core.hooksPath .githooks
@@ -159,8 +161,9 @@ empty.
 
 ## Documentation
 
-`docs/README.md` is the standard: what each document is for, where a new fact
+`CONTRIBUTING.md` is how to work on this: the review flow, where a new fact
 belongs, and what "done" means for a change. Start there.
+`docs/README.md` indexes the reference material below.
 
 | | |
 |---|---|

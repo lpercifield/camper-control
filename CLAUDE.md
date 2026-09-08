@@ -52,14 +52,18 @@ work" is fine; "this is fixed" needs evidence.
 
 ## Documentation
 
-`docs/README.md` is the standard and takes precedence over habit. Its routing
-rule decides where a new fact goes: board facts to `HARDWARE.md`, rules code
+`CONTRIBUTING.md` is the standard and takes precedence over habit - it also
+carries the review flow: branch, verify on hardware, PR, merge on green CI.
+Its routing rule decides where a new fact goes: board facts to `HARDWARE.md`, rules code
 must obey to `ARCHITECTURE.md`, diagnosed failures to `TROUBLESHOOTING.md`
 (indexed by *symptom*), patches to other people's code to `PORTING_NOTES.md`,
 rejected alternatives to `decisions/`, unfinished work to `ROADMAP.md`.
 
 A change is not done until the documents reflect it. Decision records are
-immutable - supersede, do not rewrite.
+immutable - supersede, do not rewrite, and remember to mark the superseded one.
+
+The commit hook checks that you touched *a* document, not that what is there is
+still true. Documents drift anyway; re-read them against the code periodically.
 
 ## Git
 

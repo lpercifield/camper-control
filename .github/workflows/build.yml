@@ -1,0 +1,40 @@
+name: build
+
+# Until 2026-09-08 every build had been verified on exactly one laptop. This
+# catches the "works on my machine" class of problem. It does not flash
+# anything - hardware verification is still a person with the board.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Not 3.14: PlatformIO runs ahead of its dependency support there.
+          python-version: '3.12'
+
+      # The first build pulls ~1.2 GB of platform and toolchain. Cached on
+      # platformio.ini, so it only pays that cost when the pins change.
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      # tools/patch_gfx.py runs as a pre: script and fails the build loudly if
+      # Arduino_GFX has moved the line it patches. That is deliberate: without
+      # the patch the firmware boot-loops. See docs/decisions/0007.
+      - name: Build
+        run: pio run

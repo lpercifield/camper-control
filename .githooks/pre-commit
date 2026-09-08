@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Refuse a firmware change that documents nothing.
+#
+# Not bureaucracy: docs/ROADMAP.md has gone stale twice, once within a day of
+# being written. A roadmap nobody trusts is worse than none, because it gets
+# read anyway.
+#
+# This is deliberately a block with an escape rather than a warning. A warning
+# gets ignored; a block forces a decision. When the change genuinely needs no
+# documentation - a typo, a rename, a formatting pass - say so explicitly:
+#
+#     SKIP_DOC_CHECK=1 git commit ...
+#
+# Installed via `git config core.hooksPath .githooks`, so it travels with the
+# repository instead of living in an unversioned .git/hooks.
+#
+# NOTE: this file must stay tracked in git. It was silently lost once by a
+# `git reset --hard` during its own testing, and every commit for two days
+# passed unchecked because the documentation describing it was committed while
+# the hook itself was not.
+
+set -o pipefail
+
+[ -n "$SKIP_DOC_CHECK" ] && exit 0
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+code=$(printf '%s\n' "$staged" | grep -E '^(src/|include/|lib/|tools/|platformio\.ini)' || true)
+docs=$(printf '%s\n' "$staged" | grep -E '^(docs/|CLAUDE\.md|README\.md|CONTRIBUTING\.md)' || true)
+
+[ -z "$code" ] && exit 0
+[ -n "$docs" ] && exit 0
+
+cat >&2 <<'MSG'
+
+  Firmware changed, no documentation did.
+
+  CONTRIBUTING.md decides where a fact belongs:
+
+    a fact about the board ............ docs/HARDWARE.md
+    a rule code must obey ............. docs/ARCHITECTURE.md
+    a failure you diagnosed ........... docs/TROUBLESHOOTING.md  (by symptom)
+    a patch to someone else's code .... docs/PORTING_NOTES.md
+    an alternative you rejected ....... docs/decisions/
+    work finished, or newly found ..... docs/ROADMAP.md
+
+  If this closes a roadmap item, move it to that file's "Done" section with
+  today's date - do not just delete the line. If it opens one, add it.
+
+  Nothing to document? Then say so:
+
+    SKIP_DOC_CHECK=1 git commit ...
+
+MSG
+exit 1

@@ -109,6 +109,16 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   firmware now pins to it: `offline -> searching -> connecting -> online` in
   about 19 s from boot, with no loop stalls. This closed the last blocker
   without anyone having to read a MAC off a log and edit a constant.
+- **CI, and a working commit gate** (2026-09-08). `.github/workflows/build.yml`
+  runs `pio run` on every push and PR; until now every build had been verified
+  on exactly one laptop. The pre-commit documentation gate turned out to have
+  been **inert since it was written**: its own testing used `git reset --hard`,
+  which deleted the then-untracked hook, and only the documentation describing
+  it was ever committed. Restored, tracked, and verified firing.
+- **Documentation restructured** (2026-09-08). The standard moved to
+  `CONTRIBUTING.md` at the root, where "how we work" belongs, and
+  `docs/README.md` became the index its filename promises. Two files called
+  README serving different audiences was a genuine source of confusion.
 - **Ported to NimBLE** (2026-09-07). +40 KB of heap (56,724 to 97,116 free at
   boot) and 400 KB of flash; the Arduino BLE library is gone from the graph
   entirely. Time to `online` improved from 12-19 s to 10 s. This unblocked
