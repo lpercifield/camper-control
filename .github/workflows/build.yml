@@ -33,6 +33,13 @@ jobs:
       - name: Install PlatformIO
         run: pip install --upgrade platformio
 
+      # Runs first: it takes ~15 s against the firmware build's several minutes,
+      # so a broken core fails the job while you are still looking at it. Needs
+      # no toolchain download either - env:native builds with the runner's own
+      # compiler.
+      - name: Test src/core on the host
+        run: pio test -e native
+
       # tools/patch_gfx.py runs as a pre: script and fails the build loudly if
       # Arduino_GFX has moved the line it patches. That is deliberate: without
       # the patch the firmware boot-loops. See docs/decisions/0007.

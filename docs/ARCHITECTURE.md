@@ -216,6 +216,40 @@ libraries do not expose - the same wall as `decisions/0004`.
 **So NimBLE is a prerequisite for Wi-Fi, not an optimisation.** It returns
 30-40 KB, which is the size of the gap. See `decisions/0003` and `ROADMAP.md`.
 
+## `src/core/` runs on a laptop
+
+`entity.cpp`, `registry.cpp` and `alarms.cpp` contain no hardware. That is not
+an accident of how they were written - it is a constraint, and `env:native` in
+`platformio.ini` enforces it:
+
+```
+pio test -e native        # ~2 s, 56 cases, no board
+```
+
+Those three files are the only ones the test environment compiles. Anything
+they include has to exist on a host compiler, so **a `#include` of a driver, a
+bus or NimBLE inside `src/core/` breaks the tests by construction** - which is
+the point. The rule is the whole reason this layer can be trusted while
+integrations churn around it.
+
+Two things make it work:
+
+- **`test_shim/Arduino.h`** supplies the only two things the core actually
+  wants from Arduino: `millis()` and the `log_*` macros. Its clock is fake and
+  settable, because `Entity::stale()` is a function of elapsed time and a test
+  that sleeps 15 real seconds to check a 15-second threshold is a test nobody
+  runs.
+- **`Registry::testReset()` and `Alarms::testReset()`** are compiled only under
+  `-DCC_NATIVE_TEST`, which only `env:native` defines. Both types are
+  singletons, so without a way back to empty each test case would inherit the
+  last one's state. The firmware binary is byte-identical with and without them.
+
+`settings.cpp` is deliberately outside all of this. It needs `Preferences`,
+which is NVS, which is the board.
+
+CI runs the tests before the firmware build - they are 15 s against several
+minutes, so a broken core fails while you are still watching.
+
 ## Where to extend
 
 - **A new accessory** -> `ADDING_AN_INTEGRATION.md`. One file, one line in

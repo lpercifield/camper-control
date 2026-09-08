@@ -20,6 +20,14 @@ class Registry {
   std::vector<Entity*> inDomain(Domain d) const;
   size_t countInDomain(Domain d) const;
 
+#ifdef CC_NATIVE_TEST
+  // env:native only, and never compiled into the firmware. The registry is a
+  // singleton, so without this every test case would inherit the entities the
+  // previous one registered. Safe by construction: the registry holds
+  // non-owning pointers, so emptying it frees nothing.
+  void testReset() { entities_.clear(); }
+#endif
+
  private:
   Registry() = default;
   std::vector<Entity*> entities_;

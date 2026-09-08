@@ -20,6 +20,7 @@ behaviour:
 
 ```
 git checkout -b some-branch
+  test             pio test -e native
   build            pio run
   flash            pio run -t upload --upload-port /dev/cu.usbserial-1110
   verify           read the log, confirm the thing actually works
@@ -28,6 +29,10 @@ git checkout -b some-branch
   PR               state what you verified on hardware, not just that it builds
   merge            once CI is green
 ```
+
+The tests take two seconds and need no board, so they go first. They only cover
+`src/core/` - see `docs/ARCHITECTURE.md`. Passing them is not verification, and
+never substitutes for the log.
 
 The branch is not bureaucracy - it is a cheap way back. The NimBLE port rewrote
 the most fragile file in the project; having a branch meant that was a
@@ -50,9 +55,14 @@ hardware" is useful; an implied verification is not.
 
 ## Continuous integration
 
-`.github/workflows/build.yml` runs `pio run` on every push and pull request. It
-catches the "works on my machine" class of problem, which until 2026-09-08 was
-entirely uncovered - every build had been verified on exactly one laptop.
+`.github/workflows/build.yml` runs `pio test -e native` and then `pio run` on
+every push and pull request. It catches the "works on my machine" class of
+problem, which until 2026-09-08 was entirely uncovered - every build had been
+verified on exactly one laptop.
+
+Tests run first because they are 15 s against the firmware build's several
+minutes; there is no reason to wait for a toolchain download to be told the
+core is broken.
 
 It does not flash anything. Hardware verification is still a person with the
 board in front of them.

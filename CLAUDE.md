@@ -6,6 +6,7 @@ this file is the stuff an agent needs loaded before touching anything.
 ## Commands
 
 ```
+pio test -e native                                       # host tests, ~2 s
 pio run                                                  # compile
 pio run -t upload --upload-port /dev/cu.usbserial-1110   # flash
 $(ls /opt/homebrew/Cellar/platformio/*/libexec/bin/python | head -1) \
@@ -28,6 +29,9 @@ Auto-detect picks whichever it finds first.
 - **`tools/build.sh` is Linux-only** and already out of step with
   `platformio.ini`. Never use it to check a change on this machine.
 - **`pio run | tail` hides the exit code.** Capture to a file and check `$?`.
+- **`env:native` has no `main()`**, so it cannot be built as a plain env - only
+  run as a test. `default_envs = indicator_d1` is what keeps bare `pio run`
+  from trying and failing. Ask for the tests by name: `pio test -e native`.
 - **Never flip an LVGL config flag to fix a string.** `LV_USE_FLOAT` also
   retypes `lv_value_precise_t` across LVGL's geometry headers. Format floats
   with `Entity::format()` or `snprintf`. See `docs/decisions/0005`.
@@ -53,8 +57,9 @@ work" is fine; "this is fixed" needs evidence.
 ## Documentation
 
 `CONTRIBUTING.md` is the standard and takes precedence over habit - it also
-carries the review flow: branch, verify on hardware, PR, merge on green CI.
-Its routing rule decides where a new fact goes: board facts to `HARDWARE.md`, rules code
+carries the review flow: branch, test, verify on hardware, PR, merge on green
+CI. Its routing rule decides where a new fact goes: board facts to
+`HARDWARE.md`, rules code
 must obey to `ARCHITECTURE.md`, diagnosed failures to `TROUBLESHOOTING.md`
 (indexed by *symptom*), patches to other people's code to `PORTING_NOTES.md`,
 rejected alternatives to `decisions/`, unfinished work to `ROADMAP.md`.

@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed 2026-09-07.
+Last reviewed 2026-09-08.
 
 ## Where it actually is
 
@@ -20,7 +20,7 @@ and remembers its settings.
 
 ## Design gaps
 
-**2. No shared BLE scanner.** A BLE temperature sensor - indoor and outdoor is
+**1. No shared BLE scanner.** A BLE temperature sensor - indoor and outdoor is
 the next feature - needs advertisements, but `BleSerialClient` owns the scanner
 outright and stops it while connected, so a second consumer receives nothing.
 `NimBLEDevice::getScan()` needs to become shared infrastructure that dispatches
@@ -48,36 +48,25 @@ Shortlist from the 2026-09-07 survey, nothing bought yet:
 
 None of this can receive a single packet until the shared scanner exists.
 
-**3. `Domain::System` has no page.** The enum and `domainName()` know about it;
+**2. `Domain::System` has no page.** The enum and `domainName()` know about it;
 `kNavDomains` does not. Anything registered there - uptime, heap, link health,
 exactly the diagnostics that would have shortened this week - is silently
 invisible. A trap for the next integration author.
 
-**4. Wi-Fi backhaul is not configurable.** The memory objection is gone: Wi-Fi
+**3. Wi-Fi backhaul is not configurable.** The memory objection is gone: Wi-Fi
 costs ~41 KB and there are now ~97 KB free, so it fits with room to spare, and
 coexistence was never the problem. What remains is the work - an SSID scan, an
 on-screen keyboard, credential storage - and one decision: **what the backhaul
 actually talks to.** MQTT is the obvious default and pairs with Home Assistant,
 but nothing should be built until that is settled.
 
+`core/settings.*` and the Settings overlay exist, and the Settings page carries
+a placeholder row, but nothing scans, joins or stores a network.
+
 Note NVS is not encrypted, so a stored Wi-Fi password is readable by anyone who
 can dump the flash. See `decisions/0009`.
- `core/settings.*` and the Settings
-overlay exist now, and the Settings page carries a placeholder row, but nothing
-scans, joins or stores a network. Needs an SSID list and an on-screen keyboard,
-and it is worth deciding what the backhaul actually talks to before building the
-plumbing - that destination is still undefined.
 
-Note NVS on this board is not encrypted, so a Wi-Fi password stored there is
-readable by anyone who can dump the flash. See `decisions/0009`.
-
-**5. No tests, no CI.** `src/core/` - entity formatting, registry lookup, alarm
-severity and silencing - is pure logic with no hardware dependency. A PlatformIO
-`platform = native` environment would test it on a laptop in seconds. For a
-codebase whose premise is "adding integrations should be safe", this is the
-highest-leverage missing piece.
-
-**6. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
+**4. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
 looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
 ## Smaller things
@@ -89,6 +78,13 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   the same thing. Removing the include should let the workaround go with it -
   worth doing before Wi-Fi lands for real, so the dependency is deliberate
   rather than accidental.
+- **An entity updated in the first millisecond after boot reads as never
+  updated.** `Entity` encodes "never updated" as `updatedMs_ == 0`, which is
+  also a legitimate value of `millis()`, so such a value shows `--` until the
+  next update. Found by `test_entity.cpp:test_epoch_zero`, which pins the
+  current behaviour rather than fixing it - nothing publishes that early (the
+  BMS takes ~10 s to reach `online`), so this has never been observable. A
+  separate `everUpdated_` flag is the fix if it ever matters.
 - **Bring-up scaffolding is still in `src/bsp/display.cpp`**: the loop/flush
   heartbeat and `scanI2C`. The expander sweep and the `0x48` probe are gone,
   having answered their question. These two are worth keeping in some form -
@@ -116,6 +112,17 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
 ## Done
 
+- **Host tests for `src/core/`** (2026-09-08). `env:native` in `platformio.ini`
+  builds `entity.cpp`, `registry.cpp` and `alarms.cpp` against a host compiler
+  and a fake-clock `test_shim/Arduino.h`: 56 cases in about two seconds with no
+  board, wired into CI ahead of the firmware build. Verified by mutation, not
+  just by passing - loosening `stale()` to `>=`, making `Registry::find` a
+  prefix match, and deleting the alarm auto-unmute each failed exactly the test
+  that claims to cover them. Firmware size is unchanged (flash 49.2%, RAM
+  32.6%), because the two `testReset()` helpers compile only under
+  `CC_NATIVE_TEST`. This also closed the "no CI" half of the old item, which
+  had already been overtaken by the CI work earlier the same day. See
+  `ARCHITECTURE.md`.
 - **Touch working** (2026-09-07). The controller answers at `0x48`, not the
   `0x38` its datasheet family uses; `Touch::read` needed no changes once the
   address was right. Axis mirroring is confirmed by use. See `HARDWARE.md`.
@@ -183,14 +190,14 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
 
 ## Suggested order
 
-1. Add the `native` test environment (5). Cheapest insurance before growth, and
-   nothing else on this list gets safer without it.
-2. Shared BLE scanner (2), then the indoor and outdoor temperature sensors on
+1. Shared BLE scanner (1), then the indoor and outdoor temperature sensors on
    top of it. NimBLE makes this tractable; on Bluedroid it was not.
-3. Add the System page (3), and move the heartbeat and bus scan into it - they
+2. Add the System page (2), and move the heartbeat and bus scan into it - they
    are the numbers that diagnosed most of this week, and they are only visible
    over a serial cable.
-4. Wi-Fi backhaul (4). Decide what it talks to before building the plumbing.
-5. Resolve the build-system split (6).
+3. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
+4. Resolve the build-system split (4).
 
-1-2 make it safe to change. 3-5 make it a product.
+The test environment that used to head this list landed on 2026-09-08. The
+scanner is now the next thing to build: it makes the device more useful, and
+2-4 make it a product.

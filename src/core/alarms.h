@@ -40,6 +40,17 @@ class Alarms {
   size_t size() const { return count_; }
   const Alarm& at(size_t i) const { return table_[i]; }
 
+#ifdef CC_NATIVE_TEST
+  // env:native only - see Registry::testReset. Slots are never reclaimed in
+  // normal operation (count_ only grows), which is exactly why a test suite
+  // needs a way back to empty: sixteen test cases would otherwise fill kMax.
+  void testReset() {
+    for (size_t i = 0; i < kMax; i++) table_[i] = Alarm{};
+    count_ = 0;
+    silenced_ = false;
+  }
+#endif
+
  private:
   Alarms() = default;
   Alarm* findOrCreate(const char* id);
