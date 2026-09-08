@@ -9,6 +9,7 @@
 #include "board_indicator_d1.h"
 #include "bsp/touch.h"
 #include "config.h"
+#include "core/settings.h"
 
 namespace bsp {
 namespace {
@@ -148,7 +149,7 @@ void wakeBacklight() {
   g_lastActivityMs = millis();
   if (g_dimmed) {
     g_dimmed = false;
-    setBacklight(CFG_BACKLIGHT_DEFAULT);
+    setBacklight(cc::Settings::instance().brightness());
   }
 }
 
@@ -193,7 +194,7 @@ bool displayBegin() {
 
   // Arduino core 3.x drives LEDC by pin rather than by channel.
   ledcAttach(LCD_PIN_BL, LCD_BL_FREQ_HZ, LCD_BL_RES_BITS);
-  setBacklight(CFG_BACKLIGHT_DEFAULT);
+  setBacklight(cc::Settings::instance().brightness());
 
   if (!g_touch.begin(Wire, g_expander)) {
     // Second scan: if the controller is not answering, this says whether it is
@@ -243,7 +244,9 @@ void displayLoop() {
           (unsigned)ESP.getFreeHeap());
   }
 
-  if (!g_dimmed && (millis() - g_lastActivityMs) > CFG_BACKLIGHT_IDLE_MS) {
+  // A timeout of zero means the crew asked for always-on.
+  const uint32_t timeout = cc::Settings::instance().screenTimeoutMs();
+  if (timeout != 0 && !g_dimmed && (millis() - g_lastActivityMs) > timeout) {
     g_dimmed = true;
     setBacklight(CFG_BACKLIGHT_DIM);
   }

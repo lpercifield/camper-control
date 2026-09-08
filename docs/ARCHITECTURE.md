@@ -78,6 +78,21 @@ Owns the list, calls `begin()` once and `loop()` forever. Deliberately tiny. It
 does no scheduling, no priorities and no error recovery; if an integration needs
 those, it implements them itself.
 
+### Settings - `src/core/settings.h`
+
+The only thing in the project that persists anything. NVS through
+`Preferences`, with typed accessors for the saved BMS address, brightness and
+screen timeout.
+
+**Every write happens on the main loop.** A task hands work over -
+`rememberBmsMacFromTask()` fills a slot behind a barrier and raises a flag,
+`Settings::loop()` commits it - so flash operations stay on one known context
+and no locking is needed. `Settings::loop()` is the first line of `loop()`; skip
+it and handovers are silently dropped.
+
+A saved BMS address beats `CFG_BMS_MAC`, making the constant a seed rather than
+a commitment. See `decisions/0009`.
+
 ### Alarms - `src/core/alarms.h`
 
 A fixed table of 16, no allocation. Raise and clear by id. Ids are prefixed by

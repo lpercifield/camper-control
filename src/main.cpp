@@ -12,6 +12,7 @@
 #include "bsp/display.h"
 #include "core/alarms.h"
 #include "core/integration.h"
+#include "core/settings.h"
 #include "integrations/bms_jbd.h"
 #include "ui/ui.h"
 
@@ -49,6 +50,10 @@ void setup() {
 
   pinMode(PIN_USER_BUTTON, INPUT_PULLUP);
 
+  // Before the display, which reads the stored brightness, and before the BMS,
+  // which reads the stored address.
+  cc::Settings::instance().begin();
+
   if (!bsp::displayBegin()) {
     log_e("display failed to start - continuing headless");
   }
@@ -63,6 +68,7 @@ void setup() {
 }
 
 void loop() {
+  cc::Settings::instance().loop();  // commits anything an integration handed over
   cc::Hub::instance().loop();
   serviceButton();
   serviceAlarmOutput();

@@ -41,7 +41,10 @@ work that way, so every blocking wait had to go.
    the UI and left the screen blank. It now returns false and lets `bleLoop()`
    retry. The remaining wart: `connect()` is itself synchronous and costs about
    two seconds on failure, so an absent BMS still stutters the loop each retry.
-7. Reading the protection thresholds is *not* free: each
+7. Added `peerAddress()`. The client knew which device it had connected to but
+   never exposed it, so there was no way to remember a BMS across reboots. It
+   is recorded on a successful connect and cleared on disconnect.
+8. Reading the protection thresholds is *not* free: each
    `get_0x2x_...()` is a blocking round trip that enters and leaves the BMS's
    factory mode, so the original's six back-to-back reads could stall for
    several seconds. They are now spread one per 500 ms cycle after connect.

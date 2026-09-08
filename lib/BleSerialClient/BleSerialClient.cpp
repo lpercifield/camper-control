@@ -65,6 +65,7 @@ void BleSerialClient::onDisconnect(BLEClient *pClient)
     this->receiveBuffer.clear();
     this->TxCharacteristic = nullptr;
     this->RxCharacteristic = nullptr;
+    this->peerAddress_.clear();
 
 } // onDisconnect
 
@@ -90,6 +91,7 @@ bool BleSerialClient::connectToServer() {
       return false;
     }
     log_i(" - Connected to server");
+    peerAddress_ = myDevice->getAddress().toString().c_str();
    
   
     // Obtain a reference to the service we are after in the remote BLE server.

@@ -5,6 +5,7 @@
 #include "config.h"
 #include "core/alarms.h"
 #include "core/registry.h"
+#include "core/settings.h"
 
 namespace cc {
 namespace {
@@ -46,7 +47,13 @@ bool JbdBms::begin() {
   mac[5] += 2;
   snprintf(deviceName, sizeof(deviceName), "CamperCtl-%02X%02X", mac[4], mac[5]);
 
-  ble_.setTargetAddress(CFG_BMS_MAC);
+  // A remembered address wins over the compile-time constant, which makes
+  // CFG_BMS_MAC a seed rather than a commitment. Clearing it in Settings puts
+  // the firmware back to attaching to the first JBD BMS it hears.
+  Settings& settings = Settings::instance();
+  const char* target = settings.hasBmsMac() ? settings.bmsMac() : CFG_BMS_MAC;
+  if (*target) log_i("BMS target %s", target);
+  ble_.setTargetAddress(target);
   ble_.begin(deviceName);
   ble_.setTimeout(10);
   bleStarted_ = true;
@@ -92,6 +99,9 @@ void JbdBms::service() {
   const bool connected = ble_.connected();
 
   if (connected && !bmsAttached_) {
+    // Hand the address to the main loop to persist; this is a task, and NVS
+    // writes belong on the loop. See core/settings.h.
+    Settings::instance().rememberBmsMacFromTask(ble_.peerAddress());
     bms_.begin(&ble_);
     bmsAttached_ = true;
     paramsRead_ = false;

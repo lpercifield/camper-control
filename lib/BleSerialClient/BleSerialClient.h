@@ -39,11 +39,15 @@ public:
   void bleLoop();	
   bool connectToServer();
   bool connected();
+  // Camper Control: address of the peer we actually connected to, or "" when
+  // not connected. Needed to remember the BMS across reboots.
+  const char* peerAddress() const { return peerAddress_.c_str(); }
   static  ByteRingBuffer<RX_BUFFER_SIZE> receiveBuffer;
 
 // objects
       	BLEClient *pClient;
         BLEAdvertisedDevice* myDevice;
+        std::string peerAddress_;
 	      BLEAdvertising *pAdvertising;
 	      BLEDevice *pBLEDevice;
 

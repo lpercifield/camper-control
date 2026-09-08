@@ -24,10 +24,14 @@ address, which the log prints once connected.
 exactly the diagnostics that would have shortened this week - is silently
 invisible. A trap for the next integration author.
 
-**3. No persistence.** Every setting is a compile-time constant, so changing the
-BMS MAC means a reflash. NVS-backed settings behind a Settings page is the
-largest gap between "working firmware" and "thing you live with", and wants
-designing before more constants accumulate.
+**3. Wi-Fi backhaul is not configurable.** `core/settings.*` and the Settings
+overlay exist now, and the Settings page carries a placeholder row, but nothing
+scans, joins or stores a network. Needs an SSID list and an on-screen keyboard,
+and it is worth deciding what the backhaul actually talks to before building the
+plumbing - that destination is still undefined.
+
+Note NVS on this board is not encrypted, so a Wi-Fi password stored there is
+readable by anyone who can dump the flash. See `decisions/0009`.
 
 **4. No tests, no CI.** `src/core/` - entity formatting, registry lookup, alarm
 severity and silencing - is pure logic with no hardware dependency. A PlatformIO
@@ -73,6 +77,11 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   stopping touch being polled, which read to a user as taps being ignored.
   Loop stalls went from five per 30 s to none, touch polling from 3-6/s back to
   a steady 28/s. See `decisions/0008`.
+- **Settings, persisted** (2026-09-07). `core/settings.*` stores the last
+  connected BMS address, brightness and screen timeout in NVS, reachable from a
+  gear in the header. The BMS address is saved automatically on connect and can
+  be forgotten from the page. All writes happen on the main loop; tasks hand
+  over. See `decisions/0009`.
 - **`Hub::loop` names slow integrations** (2026-09-07). Rule 1 of
   `ARCHITECTURE.md` was unenforced; it now logs any integration holding the
   loop past 50 ms. This is what found the bug above.

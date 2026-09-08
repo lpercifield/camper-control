@@ -8,6 +8,7 @@
 #include "core/alarms.h"
 #include "core/integration.h"
 #include "core/registry.h"
+#include "core/settings.h"
 #include "integrations/bms_jbd.h"
 #include "ui/theme.h"
 
@@ -42,6 +43,17 @@ lv_obj_t* g_headerStatus = nullptr;
 
 lv_obj_t* g_pages[(int)Domain::COUNT] = {nullptr};
 lv_obj_t* g_navButtons[4] = {nullptr};
+
+// Settings is an overlay rather than a fifth domain: it is not an accessory,
+// and the nav bar is about what the van can do.
+lv_obj_t* g_settings = nullptr;
+lv_obj_t* g_setBmsValue = nullptr;
+lv_obj_t* g_setBrightValue = nullptr;
+lv_obj_t* g_timeoutButtons[5] = {nullptr};
+
+// 0 means always on. Kept in step with kTimeoutLabels below.
+const uint32_t kTimeoutMs[5] = {30000UL, 60000UL, 120000UL, 300000UL, 0UL};
+const char* kTimeoutLabels[5] = {"30s", "1m", "2m", "5m", "On"};
 
 // Power page widgets
 lv_obj_t* g_socArc = nullptr;
@@ -87,6 +99,64 @@ lv_obj_t* makeLabel(lv_obj_t* parent, const char* text, const lv_font_t* font,
   return l;
 }
 
+void refreshSettings() {
+  if (!g_settings) return;
+  Settings& st = Settings::instance();
+
+  lv_label_set_text(g_setBmsValue,
+                    st.hasBmsMac() ? st.bmsMac() : "none saved");
+
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%d%%", (int)((st.brightness() * 100 + 127) / 255));
+  lv_label_set_text(g_setBrightValue, buf);
+
+  for (int i = 0; i < 5; i++) {
+    const bool active = kTimeoutMs[i] == st.screenTimeoutMs();
+    lv_obj_set_style_bg_color(g_timeoutButtons[i], active ? colAccent() : colBg(), 0);
+    lv_obj_t* lab = lv_obj_get_child(g_timeoutButtons[i], 0);
+    lv_obj_set_style_text_color(lab, active ? lv_color_black() : colMuted(), 0);
+  }
+}
+
+void showSettings(bool visible) {
+  if (!g_settings) return;
+  if (visible) {
+    refreshSettings();
+    lv_obj_remove_flag(g_settings, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(g_settings, LV_OBJ_FLAG_HIDDEN);
+  }
+  bsp::wakeBacklight();
+}
+
+void gearEventCb(lv_event_t* /*e*/) { showSettings(true); }
+void closeSettingsCb(lv_event_t* /*e*/) { showSettings(false); }
+
+void brightnessCb(lv_event_t* e) {
+  lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
+  const uint8_t level = (uint8_t)lv_slider_get_value(slider);
+  const bool released = lv_event_get_code(e) == LV_EVENT_RELEASED;
+  // Apply on every drag so it can be judged by eye; only write flash on
+  // release, or a single sweep of the slider would be hundreds of NVS writes.
+  Settings::instance().setBrightness(level, released);
+  bsp::setBacklight(level);
+  bsp::wakeBacklight();
+  refreshSettings();
+}
+
+void timeoutCb(lv_event_t* e) {
+  const intptr_t idx = (intptr_t)lv_event_get_user_data(e);
+  Settings::instance().setScreenTimeoutMs(kTimeoutMs[idx]);
+  bsp::wakeBacklight();
+  refreshSettings();
+}
+
+void clearBmsCb(lv_event_t* /*e*/) {
+  Settings::instance().clearBmsMac();
+  bsp::wakeBacklight();
+  refreshSettings();
+}
+
 void navEventCb(lv_event_t* e) {
   intptr_t idx = (intptr_t)lv_event_get_user_data(e);
   showDomain(kNavDomains[idx]);
@@ -117,8 +187,122 @@ void buildHeader(lv_obj_t* scr) {
   g_headerTitle = makeLabel(g_header, "Power", &lv_font_montserrat_20, colText());
   lv_obj_align(g_headerTitle, LV_ALIGN_LEFT_MID, 14, 0);
 
+  // The gear sits at the right edge; the link status shifts left to clear it.
+  lv_obj_t* gear = lv_button_create(g_header);
+  lv_obj_set_size(gear, 40, 34);
+  lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -8, 0);
+  lv_obj_set_style_radius(gear, 8, 0);
+  lv_obj_set_style_bg_color(gear, colBg(), 0);
+  lv_obj_add_event_cb(gear, gearEventCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* gearLabel = makeLabel(gear, LV_SYMBOL_SETTINGS, &lv_font_montserrat_20,
+                                 colMuted());
+  lv_obj_center(gearLabel);
+
   g_headerStatus = makeLabel(g_header, "starting", &lv_font_montserrat_16, colMuted());
-  lv_obj_align(g_headerStatus, LV_ALIGN_RIGHT_MID, -14, 0);
+  lv_obj_align(g_headerStatus, LV_ALIGN_RIGHT_MID, -56, 0);
+}
+
+// ---- settings overlay -------------------------------------------------------
+// Full screen, above the pages and the nav bar, hidden until the gear is
+// tapped. Rows are the same card idiom as the rest of the UI.
+void buildSettings(lv_obj_t* scr) {
+  g_settings = lv_obj_create(scr);
+  lv_obj_set_pos(g_settings, 0, 0);
+  lv_obj_set_size(g_settings, kScreenW, kScreenH);
+  lv_obj_set_style_bg_color(g_settings, colBg(), 0);
+  lv_obj_set_style_border_width(g_settings, 0, 0);
+  lv_obj_set_style_radius(g_settings, 0, 0);
+  lv_obj_set_style_pad_all(g_settings, 0, 0);
+  lv_obj_remove_flag(g_settings, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(g_settings, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* bar = lv_obj_create(g_settings);
+  lv_obj_set_pos(bar, 0, 0);
+  lv_obj_set_size(bar, kScreenW, kHeaderH);
+  lv_obj_set_style_bg_color(bar, colCard(), 0);
+  lv_obj_set_style_border_width(bar, 0, 0);
+  lv_obj_set_style_radius(bar, 0, 0);
+  lv_obj_set_style_pad_all(bar, 0, 0);
+  lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = makeLabel(bar, "Settings", &lv_font_montserrat_20, colText());
+  lv_obj_align(title, LV_ALIGN_LEFT_MID, 14, 0);
+
+  lv_obj_t* close = lv_button_create(bar);
+  lv_obj_set_size(close, 40, 34);
+  lv_obj_align(close, LV_ALIGN_RIGHT_MID, -8, 0);
+  lv_obj_set_style_radius(close, 8, 0);
+  lv_obj_set_style_bg_color(close, colBg(), 0);
+  lv_obj_add_event_cb(close, closeSettingsCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* closeLabel = makeLabel(close, LV_SYMBOL_CLOSE, &lv_font_montserrat_20,
+                                   colMuted());
+  lv_obj_center(closeLabel);
+
+  const int x = 12, w = kScreenW - 24;
+
+  // ---- brightness ----
+  lv_obj_t* bright = makeCard(g_settings, x, kHeaderH + 12, w, 96);
+  lv_obj_t* brightName = makeLabel(bright, "Brightness", &lv_font_montserrat_16,
+                                   colMuted());
+  lv_obj_align(brightName, LV_ALIGN_TOP_LEFT, 0, 0);
+  g_setBrightValue = makeLabel(bright, "--", &lv_font_montserrat_16, colText());
+  lv_obj_align(g_setBrightValue, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+  lv_obj_t* slider = lv_slider_create(bright);
+  lv_obj_set_size(slider, w - 32, 14);
+  lv_obj_align(slider, LV_ALIGN_BOTTOM_MID, 0, -4);
+  // Never all the way off: a black screen with no touch feedback looks broken.
+  lv_slider_set_range(slider, 20, 255);
+  lv_slider_set_value(slider, Settings::instance().brightness(), LV_ANIM_OFF);
+  lv_obj_set_style_bg_color(slider, colCardEdge(), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(slider, colAccent(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(slider, colAccent(), LV_PART_KNOB);
+  lv_obj_add_event_cb(slider, brightnessCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(slider, brightnessCb, LV_EVENT_RELEASED, nullptr);
+
+  // ---- screen timeout ----
+  lv_obj_t* timeout = makeCard(g_settings, x, kHeaderH + 120, w, 96);
+  lv_obj_t* timeoutName = makeLabel(timeout, "Screen timeout", &lv_font_montserrat_16,
+                                    colMuted());
+  lv_obj_align(timeoutName, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  const int bw = (w - 32 - 4 * 6) / 5;
+  for (int i = 0; i < 5; i++) {
+    lv_obj_t* b = lv_button_create(timeout);
+    lv_obj_set_size(b, bw, 40);
+    lv_obj_set_pos(b, i * (bw + 6), 30);
+    lv_obj_set_style_radius(b, 8, 0);
+    lv_obj_add_event_cb(b, timeoutCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* lab = makeLabel(b, kTimeoutLabels[i], &lv_font_montserrat_16, colMuted());
+    lv_obj_center(lab);
+    g_timeoutButtons[i] = b;
+  }
+
+  // ---- BMS ----
+  lv_obj_t* bmsCard = makeCard(g_settings, x, kHeaderH + 228, w, 96);
+  lv_obj_t* bmsName = makeLabel(bmsCard, "Battery monitor", &lv_font_montserrat_16,
+                                colMuted());
+  lv_obj_align(bmsName, LV_ALIGN_TOP_LEFT, 0, 0);
+  g_setBmsValue = makeLabel(bmsCard, "none saved", &lv_font_montserrat_20, colText());
+  lv_obj_align(g_setBmsValue, LV_ALIGN_LEFT_MID, 0, 6);
+
+  lv_obj_t* clear = lv_button_create(bmsCard);
+  lv_obj_set_size(clear, 92, 40);
+  lv_obj_align(clear, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_set_style_radius(clear, 8, 0);
+  lv_obj_set_style_bg_color(clear, colCardEdge(), 0);
+  lv_obj_add_event_cb(clear, clearBmsCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* clearLabel = makeLabel(clear, "Forget", &lv_font_montserrat_16, colText());
+  lv_obj_center(clearLabel);
+
+  // ---- wifi placeholder ----
+  lv_obj_t* wifi = makeCard(g_settings, x, kHeaderH + 336, w, 72);
+  lv_obj_t* wifiName = makeLabel(wifi, "Wi-Fi backhaul", &lv_font_montserrat_16,
+                                 colMuted());
+  lv_obj_align(wifiName, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_t* wifiState = makeLabel(wifi, "not configured yet",
+                                  &lv_font_montserrat_16, colMuted());
+  lv_obj_align(wifiState, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 }
 
 void buildNav(lv_obj_t* scr) {
@@ -510,6 +694,7 @@ void begin() {
   buildDomainPage(scr, Domain::Water);
   buildDomainPage(scr, Domain::Climate);
   buildNav(scr);
+  buildSettings(scr);  // last, so it draws above the pages and the nav bar
 
   showDomain(Domain::Power);
 }
