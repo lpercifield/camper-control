@@ -12,8 +12,10 @@ bool displayBegin();
 void displayLoop();
 
 void setBacklight(uint8_t level);   // 0-255
-void wakeBacklight();               // full brightness, restart the idle timer
-bool backlightDimmed();
+void wakeBacklight();               // configured brightness, restart the idle timer
+// True while the screen timeout has switched the backlight off. The next touch
+// wakes it and is swallowed rather than delivered as a click.
+bool screenOff();
 
 PCA9535& expander();
 

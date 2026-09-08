@@ -13,9 +13,10 @@
 #define CFG_TOUCH_MIRROR_X 1
 #define CFG_TOUCH_MIRROR_Y 1
 
+// Seed values only. Both are configurable at runtime from the Settings page and
+// persisted in NVS, so these are what a factory-fresh board starts with.
 #define CFG_BACKLIGHT_DEFAULT 200  // 0-255
-#define CFG_BACKLIGHT_DIM     30   // level after the idle timeout
-#define CFG_BACKLIGHT_IDLE_MS 120000UL
+#define CFG_BACKLIGHT_IDLE_MS 120000UL  // 0 would mean never sleep
 
 // ---- Battery / BMS ----------------------------------------------------------
 // Leave empty to connect to the first JBD/Overkill BMS found. In a campground

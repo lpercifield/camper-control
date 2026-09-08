@@ -62,7 +62,7 @@ lv_indev_t* g_indev = nullptr;
 
 uint32_t g_lastActivityMs = 0;
 uint8_t g_backlightLevel = CFG_BACKLIGHT_DEFAULT;
-bool g_dimmed = false;
+bool g_screenOff = false;
 
 uint32_t lvglTick() { return millis(); }
 
@@ -98,15 +98,30 @@ void flushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
 }
 
 void touchReadCb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
+  // Waking a dark screen is not a click. Without this, the tap that turns the
+  // backlight on also lands on whatever happened to be under the finger - and
+  // since the screen was off, the crew could not have known what that was.
+  static bool swallowUntilRelease = false;
+
   int16_t x = 0, y = 0;
-  if (g_touch.read(x, y)) {
-    data->point.x = x;
-    data->point.y = y;
-    data->state = LV_INDEV_STATE_PRESSED;
-    wakeBacklight();
-  } else {
+  if (!g_touch.read(x, y)) {
+    swallowUntilRelease = false;
     data->state = LV_INDEV_STATE_RELEASED;
+    return;
   }
+
+  // Test before waking: wakeBacklight() clears the flag we are asking about.
+  if (g_screenOff) swallowUntilRelease = true;
+  wakeBacklight();
+
+  if (swallowUntilRelease) {
+    data->state = LV_INDEV_STATE_RELEASED;
+    return;
+  }
+
+  data->point.x = x;
+  data->point.y = y;
+  data->state = LV_INDEV_STATE_PRESSED;
 }
 
 // Bring-up aid: what is actually answering on the bus. "Touch not found" is a
@@ -147,13 +162,13 @@ void setBacklight(uint8_t level) {
 
 void wakeBacklight() {
   g_lastActivityMs = millis();
-  if (g_dimmed) {
-    g_dimmed = false;
+  if (g_screenOff) {
+    g_screenOff = false;
     setBacklight(cc::Settings::instance().brightness());
   }
 }
 
-bool backlightDimmed() { return g_dimmed; }
+bool screenOff() { return g_screenOff; }
 
 bool displayBegin() {
   Wire.begin(I2C_PIN_SDA, I2C_PIN_SCL, I2C_FREQ_HZ);
@@ -244,11 +259,13 @@ void displayLoop() {
           (unsigned)ESP.getFreeHeap());
   }
 
-  // A timeout of zero means the crew asked for always-on.
+  // A timeout of zero means the crew asked for always-on. Otherwise the
+  // backlight goes fully off rather than down to a glow: this thing lives in a
+  // van and a dim panel at 2am is still a light source.
   const uint32_t timeout = cc::Settings::instance().screenTimeoutMs();
-  if (timeout != 0 && !g_dimmed && (millis() - g_lastActivityMs) > timeout) {
-    g_dimmed = true;
-    setBacklight(CFG_BACKLIGHT_DIM);
+  if (timeout != 0 && !g_screenOff && (millis() - g_lastActivityMs) > timeout) {
+    g_screenOff = true;
+    setBacklight(0);
   }
 }
 

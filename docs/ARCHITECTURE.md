@@ -160,6 +160,15 @@ Page layout constants live in `src/ui/theme.h` and at the top of
 `src/ui/ui.cpp`. The screen is 480x480 with a 44px header and a 64px nav bar,
 leaving 372px of content.
 
+Settings is an overlay above the pages and the nav bar, opened by the gear in
+the header, rather than a fifth domain - the nav bar is about what the van can
+do. See `decisions/0009`.
+
+**The screen timeout switches the backlight fully off, not down.** A dim panel
+at 2am in a van is still a light source. One consequence worth knowing:
+`touchReadCb` swallows the touch that wakes a dark screen instead of delivering
+it, because the crew could not have seen what was under their finger.
+
 ## Memory
 
 The tight resource is **internal RAM**, not flash. At the time of writing: 2.0 MB

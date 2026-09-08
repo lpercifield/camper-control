@@ -97,6 +97,9 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   stopping touch being polled, which read to a user as taps being ignored.
   Loop stalls went from five per 30 s to none, touch polling from 3-6/s back to
   a steady 28/s. See `decisions/0008`.
+- **Screen timeout switches the backlight off** (2026-09-07). It dimmed to a
+  glow before, which in a dark van is still a light source. The touch that
+  wakes a dark screen is swallowed rather than delivered as a click.
 - **Settings, persisted** (2026-09-07). `core/settings.*` stores the last
   connected BMS address, brightness and screen timeout in NVS, reachable from a
   gear in the header. The BMS address is saved automatically on connect and can
