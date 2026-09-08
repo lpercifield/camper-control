@@ -4,18 +4,37 @@ Last reviewed 2026-09-07.
 
 ## Where it actually is
 
-Runs on hardware. Boots, drives the panel, connects to the JBD BMS over BLE and
-displays live pack data. Flash 61%, static RAM 37.5%, ~65-70 KB free heap. Main
-loop ~46k iterations/sec, LVGL ~48 flushes/sec.
+Runs on hardware. Boots, drives the panel, reads touch, and carries a Settings
+overlay whose values survive a power cycle. Flash 61.5%, static RAM 37.5%,
+~55 KB free heap. Main loop ~46k iterations/sec, LVGL ~48 flushes/sec, and no
+integration holds the loop.
 
-Touch works and the four-domain navigation is drivable. The BMS link is the
-weak point: it is not currently connecting, and `CFG_BMS_MAC` is still unset.
+**The BMS is not connecting.** It did on 2026-09-06 and has not since, so the
+live pack display - the reason this project exists - is currently blank.
 
 ## Blockers
 
-**1. `CFG_BMS_MAC` is empty.** The firmware attaches to the first device
-advertising service `ff00`. Fine on a bench, wrong in a campground. Needs the
-address, which the log prints once connected.
+**1. The BMS is not connecting.** Every attempt fails the same way, about five
+times per 30 seconds:
+
+```
+gattClientEventHandler(): Failed to connect, status=Unknown ESP_ERR error
+```
+
+It connected reliably on 2026-09-06 and has not since. Nothing else can move
+until it does: the address is now saved automatically on a successful connect,
+so Settings will keep reading `none saved` until one happens, and there is no
+pack data to display.
+
+Cheapest checks first: a JBD BMS accepts one client at a time and the
+Xiaoxiang / Overkill Solar phone app will hold it, so close that and power-cycle
+the board. Then range. Then whether the client is left in a bad state by a
+failed connect - `connectToServer()` returns early now (porting note 6) and it
+is worth confirming `BLEDevice::createClient` is not leaking a client per
+attempt, since the log shows `conn_id` climbing.
+
+Note `CFG_BMS_MAC` is no longer the way to pin a battery. Set it if you like,
+but a remembered address wins, and Settings is where it is managed.
 
 ## Design gaps
 
@@ -45,10 +64,10 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
 ## Smaller things
 
 - **Bring-up scaffolding is still in `src/bsp/display.cpp`**: the loop/flush
-  heartbeat, `scanI2C`, the expander sweep and the `0x48` probe. All of it
-  earned its place during bring-up and all of it is temporary. The heartbeat
-  and the I2C scan are worth keeping in some form - the natural home is the
-  System page (4). The sweep and the probe come out once touch is solved.
+  heartbeat and `scanI2C`. The expander sweep and the `0x48` probe are gone,
+  having answered their question. These two are worth keeping in some form -
+  the natural home is the System page (2), where they would be readable on the
+  device instead of only over the wire.
 - **`flushCb` rewrites LVGL's buffer in place** to rotate 180 degrees. Correct
   for `RENDER_MODE_PARTIAL` today, but it is a side effect on memory LVGL owns
   and will break quietly if the render mode changes. `lv_display_set_rotation()`
@@ -60,8 +79,9 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   pointers it does not own; integrations hold the entities as members. Reasonable
   for embedded, but it is an unwritten contract. One sentence in `registry.h`.
 - **Alarm slots are never reclaimed.** `count_` only grows and `clear()` just
-  sets `active = false`. Fine while ids are static literals, which they must be
-  anyway - but the constraint should be stated where `raise()` is declared.
+  sets `active = false`. Fine while ids are static literals - which they must be
+  anyway, and now doubly so, since alarms are raised from the BMS task and read
+  from the main loop. State the constraint where `raise()` is declared.
 - **Free heap is down to ~55 KB** from ~67 KB, the cost of the BMS task's 8 KB
   stack. `taskLoop()` reports its high-water mark every 30 s; tune the size
   against that rather than leaving the guess in place. NimBLE would return
