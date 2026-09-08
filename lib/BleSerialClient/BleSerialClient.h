@@ -1,111 +1,103 @@
 #pragma once
-#include "BLEDevice.h"
-#include "ByteRingBuffer.h"
+#include <NimBLEDevice.h>
+
 #include <string>
 
+#include "ByteRingBuffer.h"
 
-#define BLE_BUFFER_SIZE ESP_GATT_MAX_ATTR_LEN //must be greater than MTU, less than ESP_GATT_MAX_ATTR_LEN
+// Ported from Bluedroid to NimBLE - see docs/decisions/0010. The public
+// interface is unchanged, so the BMS integration did not have to move with it.
+
+#define BLE_BUFFER_SIZE 512  // was ESP_GATT_MAX_ATTR_LEN, a Bluedroid constant
 #define MIN_MTU 50
 #define RX_BUFFER_SIZE 4096
 #define FLUSH_TIME 1000
 
-class BleSerialClient : public BLECharacteristicCallbacks, public BLEClientCallbacks, public BLEAdvertisedDeviceCallbacks, public Stream
-{
+class BleSerialClient : public NimBLEClientCallbacks,
+                        public NimBLEScanCallbacks,
+                        public Stream {
+ public:
+  BleSerialClient();
 
-
-public:
-
-// methods
-
-	BleSerialClient();
-  void begin(const char *name, bool enable_led = false, int led_pin = 13);
-  // Camper Control: restrict which BMS we attach to. Pass a lowercase MAC
+  void begin(const char* name, bool enable_led = false, int led_pin = 13);
+  // Restrict which BMS we attach to. Pass a lowercase MAC
   // ("a4:c1:38:11:22:33"); empty or null means "first device advertising the
   // JBD service", which is the original behaviour.
-  void setTargetAddress(const char *mac);
-	void end();
-	// void onRead(BLERemoteCharacteristic *pCharacteristic);
-	int available();
-	int read();
-	size_t readBytes(uint8_t *buffer, size_t bufferSize);
-	int peek();
-	size_t write(uint8_t byte);
-	void flush();
-	size_t write(const uint8_t *buffer, size_t bufferSize);
-	size_t print(const char *value);
-	void onConnect(BLEClient *pClient);
-	void onDisconnect(BLEClient *pClient);
-  void onResult(BLEAdvertisedDevice advertisedDevice);
-  void bleLoop();	
+  void setTargetAddress(const char* mac);
+  void end();
+
+  int available() override;
+  int read() override;
+  size_t readBytes(uint8_t* buffer, size_t bufferSize);
+  int peek() override;
+  size_t write(uint8_t byte) override;
+  size_t write(const uint8_t* buffer, size_t bufferSize) override;
+  void flush() override;
+  size_t print(const char* value);
+
+  // NimBLEClientCallbacks
+  void onConnect(NimBLEClient* pClient) override;
+  void onDisconnect(NimBLEClient* pClient, int reason) override;
+  void onConnectFail(NimBLEClient* pClient, int reason) override;
+  // NimBLEScanCallbacks
+  void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override;
+  void onScanEnd(const NimBLEScanResults& results, int reason) override;
+
+  void bleLoop();
   bool connectToServer();
   bool connected();
-  // Camper Control: address of the peer we actually connected to, or "" when
-  // not connected. Needed to remember the BMS across reboots.
+  // Address of the peer we actually connected to, or "" when not connected.
+  // Needed to remember the BMS across reboots.
   const char* peerAddress() const { return peerAddress_.c_str(); }
-  static  ByteRingBuffer<RX_BUFFER_SIZE> receiveBuffer;
 
-// objects
-      	BLEClient *pClient;
-        BLEAdvertisedDevice* myDevice;
-        std::string peerAddress_;
-	      BLEAdvertising *pAdvertising;
-	      BLEDevice *pBLEDevice;
+  static ByteRingBuffer<RX_BUFFER_SIZE> receiveBuffer;
 
+  NimBLEClient* pClient = nullptr;
+  NimBLERemoteCharacteristic* TxCharacteristic = nullptr;
+  NimBLERemoteCharacteristic* RxCharacteristic = nullptr;
 
+  bool enableLed = false;
+  int ledPin = 13;
 
-//Serial Characteristics
-	BLERemoteCharacteristic *TxCharacteristic;
-	BLERemoteCharacteristic *RxCharacteristic;
+ protected:
+  size_t transmitBufferLength = 0;
+  bool bleConnected = false;
 
-// primative types
-	bool enableLed = false;
-	int ledPin = 13;
+ private:
+  BleSerialClient(BleSerialClient const& other) = delete;
+  void operator=(BleSerialClient const& other) = delete;
 
-protected:
-	size_t transmitBufferLength;
-	bool bleConnected;
+  NimBLEScan* pBLEScan = nullptr;
+  NimBLEUUID serviceUUID;
+  NimBLEUUID charRxUUID;
+  NimBLEUUID charTxUUID;
 
-private:
+  // The advertised-device pointer handed to onResult() belongs to the scan
+  // results and dies with clearResults(). Keep the address instead and connect
+  // by address, which NimBLE supports directly.
+  NimBLEAddress foundAddress;
+  bool haveFound = false;
 
-// methods
-  bool checkMTU();
-	BleSerialClient(BleSerialClient const &other) = delete;		 // disable copy constructor
-	void operator=(BleSerialClient const &other) = delete; // disable assign constructor
-  void bleScan ();
-
-// objects
-	BLEScan* pBLEScan;
-  BLEUUID serviceUUID;
-  BLEUUID charRxUUID;
-  BLEUUID charTxUUID;
-
-
-// primatives 
-
-	size_t numAvailableLines;
-	uint8_t transmitBuffer[BLE_BUFFER_SIZE];
-	bool started = false;
-  boolean doConnect = false;
-  boolean doScan = false;
-  uint16_t MTU;
-	uint16_t maxTransferSize = BLE_BUFFER_SIZE;
-  uint32_t flush_100ms = 0;
-	int flush_time = FLUSH_TIME;
-  // Camper Control: non-blocking rescan bookkeeping.
-  uint32_t lastScanStartMs = 0;
+  std::string peerAddress_;
   std::string targetAddress;
 
-  /*
-	Change UUID here if required
-	
+  size_t numAvailableLines = 0;
+  uint8_t transmitBuffer[BLE_BUFFER_SIZE];
+  bool doConnect = false;
+  bool doScan = false;
+  uint16_t MTU = 0;
+  uint16_t maxTransferSize = BLE_BUFFER_SIZE;
+  uint32_t flush_100ms = 0;
+  int flush_time = FLUSH_TIME;
+  uint32_t lastScanStartMs = 0;
+  // HCI 0x3e (connection failed to be established) is common and transient.
+  // We already know the address, so retry the connect before paying for a
+  // whole rescan cycle.
+  static constexpr uint8_t kMaxConnectAttempts = 4;
+  uint8_t connectAttempts = 0;
+  uint32_t nextConnectMs = 0;
 
-	const char *BLE_SERIAL_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
-	const char *BLE_RX_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
-	const char *BLE_TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
-*/
-	const char *BLE_SERIAL_SERVICE_UUID = "ff00";
-	const char *BLE_RX_UUID = "ff01";
-	const char *BLE_TX_UUID = "ff02";
-
-
+  const char* BLE_SERIAL_SERVICE_UUID = "ff00";
+  const char* BLE_RX_UUID = "ff01";
+  const char* BLE_TX_UUID = "ff02";
 };

@@ -189,11 +189,16 @@ after a scan        heap  3512   largest block  2548
 steady state        heap  1972
 ```
 
-`WiFi.mode(WIFI_STA)` alone costs about **41 KB of internal heap**, against the
-~48 KB that is free. It does not crash - and notably the BMS stayed `online`
-through a 28-network scan with no loop stalls, so **radio coexistence itself is
-fine** - but ~2 KB of headroom is not a system you can build on. The next
-allocation of any size fails.
+`WiFi.mode(WIFI_STA)` alone costs about **41 KB of internal heap**. Under
+Bluedroid that left 1972 bytes, which is not a system you can build on.
+
+**Resolved by `decisions/0010`.** NimBLE returned 40 KB: free heap at boot went
+from 56,724 to 97,116, so Wi-Fi's 41 KB now fits with roughly 56 KB to spare.
+The measurements above were taken on Bluedroid and are kept because they are
+why the port happened.
+
+Radio coexistence was never the problem - the BMS stayed `online` through a
+28-network Wi-Fi scan with no loop stalls.
 
 PSRAM is not the answer: it stayed at 7.9 MB free throughout, because the Wi-Fi
 and lwIP buffers come from internal RAM. Moving them needs

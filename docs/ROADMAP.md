@@ -5,8 +5,8 @@ Last reviewed 2026-09-07.
 ## Where it actually is
 
 Runs on hardware. Boots, drives the panel, reads touch, and carries a Settings
-overlay whose values survive a power cycle. Flash 61.5%, static RAM 37.5%,
-~55 KB free heap. Main loop ~46k iterations/sec, LVGL ~48 flushes/sec, and no
+overlay whose values survive a power cycle. Flash 49.2%, static RAM 32.6%,
+**~97 KB free heap** since the NimBLE port. Main loop ~46k iterations/sec, LVGL ~48 flushes/sec, and no
 integration holds the loop.
 
 The BMS connects on the remembered address and reaches `online`, so the live
@@ -20,17 +20,28 @@ and remembers its settings.
 
 ## Design gaps
 
-**2. `Domain::System` has no page.** The enum and `domainName()` know about it;
+**2. No shared BLE scanner.** A BLE temperature sensor - indoor and outdoor is
+the next feature - needs advertisements, but `BleSerialClient` owns the scanner
+outright and stops it while connected, so a second consumer receives nothing.
+`NimBLEDevice::getScan()` needs to become shared infrastructure that dispatches
+advertisements to registered listeners, with the BLE client as one of them.
+Prefer broadcast sensors over connectable ones; a connectable sensor competes
+for a connection slot, a broadcasting one costs nothing but scan time.
+
+**3. `Domain::System` has no page.** The enum and `domainName()` know about it;
 `kNavDomains` does not. Anything registered there - uptime, heap, link health,
 exactly the diagnostics that would have shortened this week - is silently
 invisible. A trap for the next integration author.
 
-**3. Wi-Fi backhaul is not configurable - and will not fit until NimBLE lands.**
-Measured 2026-09-07: `WiFi.mode(WIFI_STA)` costs ~41 KB of internal heap against
-the ~48 KB free, leaving about 2 KB. Coexistence itself is not the problem - the
-BMS stayed online through a 28-network scan with no loop stalls - it is purely
-memory, and PSRAM does not help because the Wi-Fi and lwIP buffers are internal.
-Do NimBLE first. Details in `ARCHITECTURE.md`.
+**4. Wi-Fi backhaul is not configurable.** The memory objection is gone: Wi-Fi
+costs ~41 KB and there are now ~97 KB free, so it fits with room to spare, and
+coexistence was never the problem. What remains is the work - an SSID scan, an
+on-screen keyboard, credential storage - and one decision: **what the backhaul
+actually talks to.** MQTT is the obvious default and pairs with Home Assistant,
+but nothing should be built until that is settled.
+
+Note NVS is not encrypted, so a stored Wi-Fi password is readable by anyone who
+can dump the flash. See `decisions/0009`.
  `core/settings.*` and the Settings
 overlay exist now, and the Settings page carries a placeholder row, but nothing
 scans, joins or stores a network. Needs an SSID list and an on-screen keyboard,
@@ -40,13 +51,13 @@ plumbing - that destination is still undefined.
 Note NVS on this board is not encrypted, so a Wi-Fi password stored there is
 readable by anyone who can dump the flash. See `decisions/0009`.
 
-**4. No tests, no CI.** `src/core/` - entity formatting, registry lookup, alarm
+**5. No tests, no CI.** `src/core/` - entity formatting, registry lookup, alarm
 severity and silencing - is pure logic with no hardware dependency. A PlatformIO
 `platform = native` environment would test it on a laptop in seconds. For a
 codebase whose premise is "adding integrations should be safe", this is the
 highest-leverage missing piece.
 
-**5. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
+**6. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
 looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
 ## Smaller things
@@ -90,6 +101,13 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   firmware now pins to it: `offline -> searching -> connecting -> online` in
   about 19 s from boot, with no loop stalls. This closed the last blocker
   without anyone having to read a MAC off a log and edit a constant.
+- **Ported to NimBLE** (2026-09-07). +40 KB of heap (56,724 to 97,116 free at
+  boot) and 400 KB of flash; the Arduino BLE library is gone from the graph
+  entirely. Time to `online` improved from 12-19 s to 10 s. This unblocked
+  Wi-Fi, and it is the foundation the shared scanner should be built on. Two
+  things it had to learn: NimBLE will not connect while scanning and `stop()`
+  is asynchronous, and HCI 0x3e is common and transient - retrying the connect
+  beats paying for a rescan. See `decisions/0010`.
 - **Screen timeout switches the backlight off** (2026-09-07). It dimmed to a
   glow before, which in a dark van is still a light source. The touch that
   wakes a dark screen is swallowed rather than delivered as a click.
@@ -127,16 +145,14 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
 
 ## Suggested order
 
-1. Add the `native` test environment (4). Cheapest insurance before growth, and
+1. Add the `native` test environment (5). Cheapest insurance before growth, and
    nothing else on this list gets safer without it.
-2. Add the System page (2), and move the heartbeat and bus scan into it - they
+2. Shared BLE scanner (2), then the indoor and outdoor temperature sensors on
+   top of it. NimBLE makes this tractable; on Bluedroid it was not.
+3. Add the System page (3), and move the heartbeat and bus scan into it - they
    are the numbers that diagnosed most of this week, and they are only visible
    over a serial cable.
-3. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
-4. Resolve the build-system split (5).
-5. NimBLE, now the answer to *four* problems: the heap the BMS task took,
-   Bluedroid's synchronous connect, the shared scanner a BLE sensor needs, and
-   the ~41 KB Wi-Fi wants and cannot have. It has stopped being an optimisation
-   and become the thing everything else is waiting on.
+4. Wi-Fi backhaul (4). Decide what it talks to before building the plumbing.
+5. Resolve the build-system split (6).
 
 1-2 make it safe to change. 3-5 make it a product.

@@ -7,7 +7,10 @@ in this directory for where other kinds of fact belong.
 ## What came across from esp32-smartBMSdisplay
 
 `lib/OverkillSolarBMS` is the Overkill Solar BMS 2 library, unchanged.
-`lib/BleSerialClient` is the BLE serial client, patched (below). The monitor
+`lib/BleSerialClient` is the BLE serial client, patched (below) and since
+rewritten against NimBLE - see `decisions/0010`. Every numbered change below
+survived that rewrite; they are listed against the original Bluedroid code
+because that is where each problem was found. The monitor
 logic - protection thresholds, alarm conditions, cell statistics, the status
 string - was rewritten as `src/integrations/bms_jbd.cpp` with the same rules and
 the same thresholds. The five U8g2 OLED pages became one LVGL screen: the SOC
