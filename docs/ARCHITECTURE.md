@@ -176,8 +176,32 @@ of the 3.3 MB app partition, 123 KB static RAM, and roughly 65-70 KB of free
 heap after boot.
 
 Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 48 KB
-pool (`LV_MEM_SIZE`), and Bluedroid. Adding a second BLE device or a large new
-screen will need one of them to give ground - see `ROADMAP.md`.
+pool (`LV_MEM_SIZE`), Bluedroid, and the BMS task's 8 KB stack.
+
+### Wi-Fi does not currently fit
+
+Measured on hardware 2026-09-07, with the BMS connected and the UI running:
+
+```
+before Wi-Fi        heap 48084   largest block 31732
+after WiFi.mode()   heap  7168   largest block  6644
+after a scan        heap  3512   largest block  2548
+steady state        heap  1972
+```
+
+`WiFi.mode(WIFI_STA)` alone costs about **41 KB of internal heap**, against the
+~48 KB that is free. It does not crash - and notably the BMS stayed `online`
+through a 28-network scan with no loop stalls, so **radio coexistence itself is
+fine** - but ~2 KB of headroom is not a system you can build on. The next
+allocation of any size fails.
+
+PSRAM is not the answer: it stayed at 7.9 MB free throughout, because the Wi-Fi
+and lwIP buffers come from internal RAM. Moving them needs
+`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP`, an sdkconfig option the prebuilt Arduino
+libraries do not expose - the same wall as `decisions/0004`.
+
+**So NimBLE is a prerequisite for Wi-Fi, not an optimisation.** It returns
+30-40 KB, which is the size of the gap. See `decisions/0003` and `ROADMAP.md`.
 
 ## Where to extend
 

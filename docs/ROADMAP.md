@@ -25,7 +25,13 @@ and remembers its settings.
 exactly the diagnostics that would have shortened this week - is silently
 invisible. A trap for the next integration author.
 
-**3. Wi-Fi backhaul is not configurable.** `core/settings.*` and the Settings
+**3. Wi-Fi backhaul is not configurable - and will not fit until NimBLE lands.**
+Measured 2026-09-07: `WiFi.mode(WIFI_STA)` costs ~41 KB of internal heap against
+the ~48 KB free, leaving about 2 KB. Coexistence itself is not the problem - the
+BMS stayed online through a 28-network scan with no loop stalls - it is purely
+memory, and PSRAM does not help because the Wi-Fi and lwIP buffers are internal.
+Do NimBLE first. Details in `ARCHITECTURE.md`.
+ `core/settings.*` and the Settings
 overlay exist now, and the Settings page carries a placeholder row, but nothing
 scans, joins or stores a network. Needs an SSID list and an on-screen keyboard,
 and it is worth deciding what the backhaul actually talks to before building the
@@ -128,7 +134,9 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
    over a serial cable.
 3. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
 4. Resolve the build-system split (5).
-5. NimBLE, which is now the answer to two problems: the heap the BMS task took,
-   and Bluedroid's synchronous connect.
+5. NimBLE, now the answer to *four* problems: the heap the BMS task took,
+   Bluedroid's synchronous connect, the shared scanner a BLE sensor needs, and
+   the ~41 KB Wi-Fi wants and cannot have. It has stopped being an optimisation
+   and become the thing everything else is waiting on.
 
 1-2 make it safe to change. 3-5 make it a product.
