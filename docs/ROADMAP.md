@@ -9,32 +9,14 @@ overlay whose values survive a power cycle. Flash 61.5%, static RAM 37.5%,
 ~55 KB free heap. Main loop ~46k iterations/sec, LVGL ~48 flushes/sec, and no
 integration holds the loop.
 
-**The BMS is not connecting.** It did on 2026-09-06 and has not since, so the
-live pack display - the reason this project exists - is currently blank.
+The BMS connects on the remembered address and reaches `online`, so the live
+pack display works. **There are no blockers left.** What remains is the
+difference between a working device and one worth living with.
 
 ## Blockers
 
-**1. The BMS is not connecting.** Every attempt fails the same way, about five
-times per 30 seconds:
-
-```
-gattClientEventHandler(): Failed to connect, status=Unknown ESP_ERR error
-```
-
-It connected reliably on 2026-09-06 and has not since. Nothing else can move
-until it does: the address is now saved automatically on a successful connect,
-so Settings will keep reading `none saved` until one happens, and there is no
-pack data to display.
-
-Cheapest checks first: a JBD BMS accepts one client at a time and the
-Xiaoxiang / Overkill Solar phone app will hold it, so close that and power-cycle
-the board. Then range. Then whether the client is left in a bad state by a
-failed connect - `connectToServer()` returns early now (porting note 6) and it
-is worth confirming `BLEDevice::createClient` is not leaking a client per
-attempt, since the log shows `conn_id` climbing.
-
-Note `CFG_BMS_MAC` is no longer the way to pin a battery. Set it if you like,
-but a remembered address wins, and Settings is where it is managed.
+None. The device boots, drives the panel, reads touch, connects to the battery
+and remembers its settings.
 
 ## Design gaps
 
@@ -97,6 +79,11 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   stopping touch being polled, which read to a user as taps being ignored.
   Loop stalls went from five per 30 s to none, touch polling from 3-6/s back to
   a steady 28/s. See `decisions/0008`.
+- **The BMS connects on a remembered address** (2026-09-07). The auto-save from
+  `decisions/0009` captured `a4:c1:38:e0:af:18` on a successful connect, and the
+  firmware now pins to it: `offline -> searching -> connecting -> online` in
+  about 19 s from boot, with no loop stalls. This closed the last blocker
+  without anyone having to read a MAC off a log and edit a constant.
 - **Screen timeout switches the backlight off** (2026-09-07). It dimmed to a
   glow before, which in a dark van is still a light source. The touch that
   wakes a dark screen is swallowed rather than delivered as a click.
@@ -134,11 +121,14 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
 
 ## Suggested order
 
-1. Get the BMS connecting again, and set `CFG_BMS_MAC` (1).
-2. Add the `native` test environment (4). Cheapest insurance before growth.
-3. Add the System page (2), and move the heartbeat and bus scan into it.
+1. Add the `native` test environment (4). Cheapest insurance before growth, and
+   nothing else on this list gets safer without it.
+2. Add the System page (2), and move the heartbeat and bus scan into it - they
+   are the numbers that diagnosed most of this week, and they are only visible
+   over a serial cable.
+3. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
 4. Resolve the build-system split (5).
-5. NVS-backed settings (3).
-6. NimBLE - now also the answer to the heap the BMS task consumed.
+5. NimBLE, which is now the answer to two problems: the heap the BMS task took,
+   and Bluedroid's synchronous connect.
 
-1 makes the device useful. 2-4 make it safe to change. 5-6 make it a product.
+1-2 make it safe to change. 3-5 make it a product.
