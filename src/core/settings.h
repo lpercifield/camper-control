@@ -31,6 +31,15 @@ class Settings {
   void clearBmsMac();
   void rememberBmsMacFromTask(const char* mac);
 
+  // ---- BLE sensors ----
+  // Per-sensor display name, keyed by MAC, so a sensor can be called "Fridge"
+  // rather than "ATC_1a2b3c". Empty or absent means "use whatever the sensor
+  // advertises". Main loop only, like every other write here.
+  static constexpr size_t kSensorNameLen = 24;
+  bool sensorName(const char* mac, char* out, size_t len);
+  void setSensorName(const char* mac, const char* name);
+  void clearSensorName(const char* mac);
+
   // ---- Display ----
   uint8_t brightness() const { return brightness_; }
   // persist=false while a slider is being dragged; the caller commits once on

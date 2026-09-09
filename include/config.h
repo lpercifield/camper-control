@@ -41,13 +41,5 @@
 // How far below the BMS's own cutoff we raise our warning (ABYC pre-alarm).
 #define CFG_ALARM_MARGIN_V 0.1f
 
-// ---- Temperature / humidity sensors -----------------------------------------
-// A BTHome v2 broadcaster, listened to rather than connected to. Empty means
-// bring-up mode: attach to any BTHome advertiser heard, which is what makes it
-// testable against a phone whose advertising address rotates. Set the sensor's
-// real address once there is a sensor.
-//   #define CFG_BTHOME_INDOOR_MAC "a4:c1:38:11:22:33"
-#define CFG_BTHOME_INDOOR_MAC ""
-
 // ---- Housekeeping -----------------------------------------------------------
 #define CFG_STALE_AFTER_MS 15000UL  // a value older than this reads as stale

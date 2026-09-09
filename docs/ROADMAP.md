@@ -30,11 +30,22 @@ on 2026-09-09 against a synthetic BTHome advertisement broadcast from an
 Android phone - `40 01 54 02 C4 09 03 BF 13` under service UUID `0xFCD2` came
 out as 25.0 C, 51% and 84% on the Climate page. What is left is a purchase.
 
-`CFG_BTHOME_INDOOR_MAC` is empty, which means bring-up mode: attach to any
-BTHome advertiser heard. That is what makes the phone test work at all, since
-Android rotates its advertising address - it changed three times during
-testing. Set a real address once there is a real sensor, and add a second
-config for outdoor.
+Sensors are discovered rather than configured: every BTHome v2 broadcaster in
+earshot binds a slot in a fixed table of eight, and the Climate page gives each
+one a row - the crew's name and the temperature on top, what the sensor calls
+itself and its battery underneath. Tapping a row renames it, and the name is
+kept in NVS against the sensor's address. There is no compile-time sensor
+constant any more; `CFG_BTHOME_INDOOR_MAC` is gone.
+
+**UNVERIFIED:** the rename itself. Discovery, binding, the NVS lookup on bind
+and the page render are all confirmed on hardware, but nobody has yet put a
+finger on the glass and typed a name. A successful save logs
+`settings: sensor <mac> named '<name>'`.
+
+Names are keyed by address, so a renamed sensor appears to lose its name when
+its address rotates. Real sensors have fixed addresses; a phone under test does
+not, and rotated three times in an hour. The table evicts the least recently
+heard slot, so rotation cannot wedge it shut against a real sensor.
 
 Prefer broadcast sensors over connectable ones: a connectable sensor competes
 for the one connection slot the BMS holds, a broadcasting one costs nothing but

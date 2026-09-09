@@ -1,80 +1,72 @@
 #pragma once
 #include <BleScanner.h>
 
-#include <string>
-
 #include "core/bthome.h"
-#include "core/entity.h"
 #include "core/integration.h"
+#include "core/settings.h"
 
 namespace cc {
 
-// A BTHome v2 temperature and humidity sensor, heard rather than connected to.
-//
-// It never opens a connection - the BMS holds the only slot (`decisions/0003`)
-// - so this is a listener on the shared scanner and nothing more. Two of these
-// are expected eventually, indoor and outdoor, which is why the entity ids come
-// from the config rather than being baked in.
-struct BtHomeSensorConfig {
-  const char* name;      // integration name, e.g. "Indoor sensor"
-  const char* tempId;    // "climate.indoor_temp"
-  const char* tempName;  // "Indoor temp"
-  const char* humId;
-  const char* humName;
-  const char* battId;
-  const char* battName;
-  // Lowercase MAC to pin to. Empty means **bring-up mode**: take any BTHome
-  // advertiser at all. That is what makes it possible to test against a phone,
-  // whose advertising address rotates and so cannot be pinned. Set a real
-  // address once the sensor is a sensor.
-  const char* mac;
+// A fixed table, no allocation - the same idiom as the alarm table. Eight is
+// more sensors than a van has rooms, and the least recently heard slot is
+// reused when a ninth turns up.
+constexpr size_t kMaxBtHomeSensors = 8;
+
+// One discovered BTHome broadcaster. Written on the NimBLE host task, read by
+// the UI on the main loop.
+struct BtHomeSensor {
+  char mac[18] = {0};                            // "aa:bb:cc:dd:ee:ff"
+  char advName[Settings::kSensorNameLen] = {0};  // whatever it advertises
+  char customName[Settings::kSensorNameLen] = {0};
+
+  float tempC = 0.0f;
+  float humPct = 0.0f;
+  uint8_t battPct = 0;
+  bool haveTemp = false;
+  bool haveHum = false;
+  bool haveBatt = false;
+
+  uint32_t lastHeardMs = 0;
+  bool bound = false;
+  // Set when a slot binds; the main loop reads the stored name out of NVS,
+  // because flash must not be touched from the BLE task (`decisions/0009`).
+  volatile bool needsNameLoad = false;
+
+  // What the Climate page puts on the top line: the crew's name if they gave
+  // one, else whatever the sensor calls itself, else its address.
+  const char* displayName() const;
+  // The bottom line: the advertised name, or the address when it has none.
+  const char* subtitle() const;
+  bool stale() const;
 };
 
-class BtHomeSensor : public Integration, public BleAdvertisementListener {
+// Every BTHome v2 broadcaster in earshot. It never connects - the BMS holds the
+// only slot - so this is a listener on the shared scanner and nothing more.
+//
+// It publishes no entities. Like the per-cell data on the Power page, this is
+// an array of like things that the entity model deliberately does not carry, so
+// the Climate page asks this integration directly. See `ARCHITECTURE.md`.
+class BtHomeSensors : public Integration, public BleAdvertisementListener {
  public:
-  explicit BtHomeSensor(const BtHomeSensorConfig& cfg);
-
-  const char* name() const override { return cfg_.name; }
+  const char* name() const override { return "BTHome sensors"; }
   bool begin() override;
   void loop() override;
 
   void onAdvertisement(const NimBLEAdvertisedDevice* device) override;
 
-  // Address we are actually listening to, or "" if nothing has been heard.
-  const char* sourceAddress() const { return source_.c_str(); }
+  size_t count() const { return bound_; }
+  const BtHomeSensor* at(size_t i) const;
+  // Rename by address. Persists. Main loop only.
+  void rename(const char* mac, const char* newName);
 
  private:
-  // Written on the NimBLE host task, read on the main loop. Kept deliberately
-  // small and published by loop(), so entity writes stay on the main loop the
-  // way the rest of the system expects (`ARCHITECTURE.md`).
-  struct Reading {
-    float tempC = 0.0f;
-    float humPct = 0.0f;
-    uint8_t battPct = 0;
-    bool haveTemp = false;
-    bool haveHum = false;
-    bool haveBatt = false;
-  };
+  BtHomeSensor* findOrBind(const char* mac);
 
-  BtHomeSensorConfig cfg_;
-  Reading pending_;
-  volatile bool havePending_ = false;
-  std::string source_;
-  std::string boundMac_;
-  uint32_t lastHeardMs_ = 0;
+  BtHomeSensor slots_[kMaxBtHomeSensors];
+  size_t bound_ = 0;
   uint32_t tick_ = 0;
-  bool logged_ = false;
-  float lastTemp_ = 0.0f;
-  float lastHum_ = 0.0f;
-  uint8_t lastBatt_ = 0;
-
-  NumericEntity temp_;
-  NumericEntity hum_;
-  NumericEntity batt_;
 };
 
-// The one sensor wired up today. Indoor, unpinned, so it will attach to
-// whatever BTHome advertiser it hears - including a phone.
-BtHomeSensor& indoorSensor();
+BtHomeSensors& btHomeSensors();
 
 }  // namespace cc

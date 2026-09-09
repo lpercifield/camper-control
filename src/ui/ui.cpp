@@ -10,6 +10,7 @@
 #include "core/registry.h"
 #include "core/settings.h"
 #include "integrations/bms_jbd.h"
+#include "integrations/bthome_sensor.h"
 #include "ui/theme.h"
 
 namespace cc {
@@ -71,6 +72,18 @@ lv_obj_t* g_fetLabel = nullptr;
 // Placeholder pages keep a label we can update as integrations appear.
 lv_obj_t* g_emptyLabel[(int)Domain::COUNT] = {nullptr};
 lv_obj_t* g_entityList[(int)Domain::COUNT] = {nullptr};
+
+// Climate: one row per sensor rather than one per reading, so a sensor reads as
+// a thing in a place rather than three unrelated numbers.
+constexpr int kSensorRowH = 64;
+lv_obj_t* g_climateList = nullptr;
+lv_obj_t* g_climateEmpty = nullptr;
+
+// Rename overlay. Above everything, including Settings.
+lv_obj_t* g_rename = nullptr;
+lv_obj_t* g_renameSubtitle = nullptr;
+lv_obj_t* g_renameInput = nullptr;
+char g_renameMac[18] = {0};
 
 const Domain kNavDomains[4] = {Domain::Power, Domain::Lighting, Domain::Water,
                                Domain::Climate};
@@ -428,7 +441,221 @@ void buildPowerPage(lv_obj_t* scr) {
   lv_obj_align(g_fetLabel, LV_ALIGN_RIGHT_MID, 0, 0);
 }
 
-// Lights / Water / Climate: nothing is wired up yet, so these pages list any
+// ---- rename overlay ---------------------------------------------------------
+// Tapping a sensor row opens this. It is the first on-screen text entry in the
+// project; the Wi-Fi work in ROADMAP.md needs the same keyboard.
+
+void closeRename() {
+  if (!g_rename) return;
+  lv_obj_add_flag(g_rename, LV_OBJ_FLAG_HIDDEN);
+  g_renameMac[0] = '\0';
+  bsp::wakeBacklight();
+}
+
+void renameCancelCb(lv_event_t* /*e*/) { closeRename(); }
+
+void renameSaveCb(lv_event_t* /*e*/) {
+  if (g_renameMac[0]) {
+    const char* text = lv_textarea_get_text(g_renameInput);
+    // An empty box means "go back to whatever the sensor calls itself" rather
+    // than a sensor with no name at all.
+    btHomeSensors().rename(g_renameMac, (text && text[0]) ? text : nullptr);
+  }
+  closeRename();
+}
+
+void showRename(const char* mac) {
+  if (!g_rename || mac == nullptr) return;
+  const BtHomeSensors& sensors = btHomeSensors();
+  const BtHomeSensor* found = nullptr;
+  for (size_t i = 0; i < sensors.count(); i++) {
+    const BtHomeSensor* s = sensors.at(i);
+    if (s && strcmp(s->mac, mac) == 0) {
+      found = s;
+      break;
+    }
+  }
+  if (!found) return;
+
+  strncpy(g_renameMac, mac, sizeof(g_renameMac) - 1);
+  g_renameMac[sizeof(g_renameMac) - 1] = '\0';
+
+  char sub[64];
+  snprintf(sub, sizeof(sub), "%s  -  %s", found->subtitle(), found->mac);
+  lv_label_set_text(g_renameSubtitle, sub);
+  // Seed with the current custom name only. Pre-filling the advertised name
+  // would make "clear it back to the default" impossible without knowing to
+  // empty the box first.
+  lv_textarea_set_text(g_renameInput, found->customName);
+
+  lv_obj_remove_flag(g_rename, LV_OBJ_FLAG_HIDDEN);
+  bsp::wakeBacklight();
+}
+
+void sensorRowCb(lv_event_t* e) {
+  const char* mac = static_cast<const char*>(lv_event_get_user_data(e));
+  showRename(mac);
+}
+
+void buildRename(lv_obj_t* scr) {
+  g_rename = lv_obj_create(scr);
+  lv_obj_set_pos(g_rename, 0, 0);
+  lv_obj_set_size(g_rename, kScreenW, kScreenH);
+  lv_obj_set_style_bg_color(g_rename, colBg(), 0);
+  lv_obj_set_style_border_width(g_rename, 0, 0);
+  lv_obj_set_style_radius(g_rename, 0, 0);
+  lv_obj_set_style_pad_all(g_rename, 0, 0);
+  lv_obj_remove_flag(g_rename, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(g_rename, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* title = makeLabel(g_rename, "Rename sensor", &lv_font_montserrat_20,
+                              colText());
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 14, 12);
+
+  g_renameSubtitle = makeLabel(g_rename, "", &lv_font_montserrat_14, colMuted());
+  lv_obj_align(g_renameSubtitle, LV_ALIGN_TOP_LEFT, 14, 38);
+
+  g_renameInput = lv_textarea_create(g_rename);
+  lv_obj_set_pos(g_renameInput, 14, 62);
+  lv_obj_set_size(g_renameInput, kScreenW - 28, 52);
+  lv_textarea_set_one_line(g_renameInput, true);
+  lv_textarea_set_max_length(g_renameInput, Settings::kSensorNameLen - 1);
+  lv_textarea_set_placeholder_text(g_renameInput, "Living room");
+  lv_obj_set_style_text_font(g_renameInput, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_bg_color(g_renameInput, colCard(), 0);
+  lv_obj_set_style_border_color(g_renameInput, colCardEdge(), 0);
+  lv_obj_set_style_text_color(g_renameInput, colText(), 0);
+
+  lv_obj_t* cancel = lv_button_create(g_rename);
+  lv_obj_set_size(cancel, 130, 44);
+  lv_obj_set_pos(cancel, 14, 124);
+  lv_obj_set_style_radius(cancel, 8, 0);
+  lv_obj_set_style_bg_color(cancel, colCard(), 0);
+  lv_obj_add_event_cb(cancel, renameCancelCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_center(makeLabel(cancel, "Cancel", &lv_font_montserrat_16, colMuted()));
+
+  lv_obj_t* save = lv_button_create(g_rename);
+  lv_obj_set_size(save, 130, 44);
+  lv_obj_set_pos(save, kScreenW - 144, 124);
+  lv_obj_set_style_radius(save, 8, 0);
+  lv_obj_set_style_bg_color(save, colAccent(), 0);
+  lv_obj_add_event_cb(save, renameSaveCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_center(makeLabel(save, "Save", &lv_font_montserrat_16, lv_color_black()));
+
+  lv_obj_t* kb = lv_keyboard_create(g_rename);
+  lv_obj_set_size(kb, kScreenW, 292);
+  lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_keyboard_set_textarea(kb, g_renameInput);
+  // The keyboard's own tick and cross are the keys a thumb lands on first, so
+  // wire them to the same actions as the buttons above it.
+  lv_obj_add_event_cb(kb, renameSaveCb, LV_EVENT_READY, nullptr);
+  lv_obj_add_event_cb(kb, renameCancelCb, LV_EVENT_CANCEL, nullptr);
+}
+
+// ---- climate page -----------------------------------------------------------
+// One row per sensor: the crew's name and the temperature on the top line, what
+// the sensor calls itself and its battery underneath, humidity on the right.
+// Tapping a row renames it.
+
+void buildClimatePage(lv_obj_t* scr) {
+  lv_obj_t* p = makePage(scr);
+  g_pages[(int)Domain::Climate] = p;
+
+  g_climateList = lv_obj_create(p);
+  lv_obj_set_pos(g_climateList, 4, 4);
+  lv_obj_set_size(g_climateList, 456, kContentH - 24);
+  lv_obj_set_style_bg_color(g_climateList, colBg(), 0);
+  lv_obj_set_style_border_width(g_climateList, 0, 0);
+  lv_obj_set_style_pad_all(g_climateList, 0, 0);
+  lv_obj_set_flex_flow(g_climateList, LV_FLEX_FLOW_COLUMN);
+
+  g_climateEmpty = makeLabel(
+      p, "No sensors heard yet.\n\nAny BTHome v2 broadcaster\nin range appears here.",
+      &lv_font_montserrat_16, colMuted());
+  lv_obj_set_style_text_align(g_climateEmpty, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_center(g_climateEmpty);
+}
+
+void refreshClimatePage() {
+  if (!g_climateList) return;
+  BtHomeSensors& sensors = btHomeSensors();
+  const size_t n = sensors.count();
+
+  if (n == 0) {
+    lv_obj_remove_flag(g_climateEmpty, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_climateList, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_obj_add_flag(g_climateEmpty, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_remove_flag(g_climateList, LV_OBJ_FLAG_HIDDEN);
+
+  // Rows are created once and then only their text changes. The click handler
+  // gets a pointer to the slot's own mac buffer, which is stable for the life
+  // of the table - the slot array never moves.
+  while (lv_obj_get_child_count(g_climateList) < n) {
+    const size_t idx = lv_obj_get_child_count(g_climateList);
+    lv_obj_t* row = makeCard(g_climateList, 0, 0, 456, kSensorRowH);
+    lv_obj_set_style_margin_bottom(row, 6, 0);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    const BtHomeSensor* slot = sensors.at(idx);
+    lv_obj_add_event_cb(row, sensorRowCb, LV_EVENT_CLICKED,
+                        const_cast<char*>(slot->mac));
+
+    lv_obj_t* name = makeLabel(row, "", &lv_font_montserrat_20, colText());
+    lv_obj_align(name, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_t* sub = makeLabel(row, "", &lv_font_montserrat_14, colMuted());
+    lv_obj_align(sub, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_t* temp = makeLabel(row, "", &lv_font_montserrat_20, colText());
+    lv_obj_align(temp, LV_ALIGN_TOP_RIGHT, 0, 0);
+    lv_obj_t* hum = makeLabel(row, "", &lv_font_montserrat_16, colMuted());
+    lv_obj_align(hum, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  }
+
+  for (size_t i = 0; i < n; i++) {
+    const BtHomeSensor* s = sensors.at(i);
+    if (!s) continue;
+    lv_obj_t* row = lv_obj_get_child(g_climateList, i);
+    const bool stale = s->stale();
+
+    lv_label_set_text(lv_obj_get_child(row, 0), s->displayName());
+    lv_obj_set_style_text_color(lv_obj_get_child(row, 0),
+                                stale ? colMuted() : colText(), 0);
+
+    char sub[64];
+    if (s->haveBatt) {
+      snprintf(sub, sizeof(sub), "%s   batt %u%%", s->subtitle(),
+               (unsigned)s->battPct);
+    } else {
+      snprintf(sub, sizeof(sub), "%s", s->subtitle());
+    }
+    lv_label_set_text(lv_obj_get_child(row, 1), sub);
+    // A flat battery is the one thing here worth colouring: a sensor that dies
+    // in February reads exactly like one that is simply cold.
+    lv_obj_set_style_text_color(lv_obj_get_child(row, 1),
+                                (s->haveBatt && s->battPct <= 20) ? colWarn()
+                                                                  : colMuted(),
+                                0);
+
+    char buf[24];
+    if (s->haveTemp) {
+      snprintf(buf, sizeof(buf), "%.1f C", s->tempC);
+    } else {
+      snprintf(buf, sizeof(buf), "--");
+    }
+    lv_label_set_text(lv_obj_get_child(row, 2), buf);
+    lv_obj_set_style_text_color(lv_obj_get_child(row, 2),
+                                stale ? colMuted() : colText(), 0);
+
+    if (s->haveHum) {
+      snprintf(buf, sizeof(buf), "%.0f %%", s->humPct);
+    } else {
+      snprintf(buf, sizeof(buf), "--");
+    }
+    lv_label_set_text(lv_obj_get_child(row, 3), buf);
+  }
+}
+
+// Lights / Water: nothing is wired up yet, so these pages list any
 // entities that exist in the domain and otherwise say plainly that the domain
 // is waiting for an integration.
 void buildDomainPage(lv_obj_t* scr, Domain d) {
@@ -692,9 +919,10 @@ void begin() {
   buildPowerPage(scr);
   buildDomainPage(scr, Domain::Lighting);
   buildDomainPage(scr, Domain::Water);
-  buildDomainPage(scr, Domain::Climate);
+  buildClimatePage(scr);
   buildNav(scr);
-  buildSettings(scr);  // last, so it draws above the pages and the nav bar
+  buildSettings(scr);  // above the pages and the nav bar
+  buildRename(scr);    // and the rename keyboard above even that
 
   showDomain(Domain::Power);
 }
@@ -707,6 +935,9 @@ void tick() {
   switch (g_current) {
     case Domain::Power:
       refreshPowerPage();
+      break;
+    case Domain::Climate:
+      refreshClimatePage();
       break;
     default:
       refreshDomainPage(g_current);

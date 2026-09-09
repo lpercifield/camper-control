@@ -8,7 +8,50 @@ constexpr const char* kNamespace = "camper";
 constexpr const char* kKeyBmsMac = "bms_mac";
 constexpr const char* kKeyBright = "bright";
 constexpr const char* kKeyTimeout = "timeout";
+
+// NVS keys are limited to 15 characters, so a MAC cannot be stored with its
+// colons: "n" plus twelve hex digits is thirteen, which fits with room to
+// spare. Anything longer is silently truncated by NVS, which would make two
+// sensors share a name.
+bool sensorKey(const char* mac, char* out, size_t len) {
+  if (mac == nullptr || len < 14) return false;
+  size_t n = 0;
+  out[n++] = 'n';
+  for (const char* p = mac; *p && n < 13; ++p) {
+    if (*p == ':') continue;
+    out[n++] = static_cast<char>(tolower(*p));
+  }
+  out[n] = '\0';
+  return n == 13;
+}
+
 }  // namespace
+
+bool Settings::sensorName(const char* mac, char* out, size_t len) {
+  if (out == nullptr || len == 0) return false;
+  out[0] = '\0';
+  char key[16];
+  if (!open_ || !sensorKey(mac, key, sizeof(key))) return false;
+  prefs_.getString(key, out, len);
+  return out[0] != '\0';
+}
+
+void Settings::setSensorName(const char* mac, const char* name) {
+  char key[16];
+  if (!open_ || !sensorKey(mac, key, sizeof(key))) return;
+  if (name == nullptr || name[0] == '\0') {
+    prefs_.remove(key);
+    log_i("settings: sensor %s name cleared", mac);
+    return;
+  }
+  char trimmed[kSensorNameLen];
+  strncpy(trimmed, name, sizeof(trimmed));
+  trimmed[sizeof(trimmed) - 1] = '\0';
+  prefs_.putString(key, trimmed);
+  log_i("settings: sensor %s named '%s'", mac, trimmed);
+}
+
+void Settings::clearSensorName(const char* mac) { setSensorName(mac, nullptr); }
 
 Settings& Settings::instance() {
   static Settings s;

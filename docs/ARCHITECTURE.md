@@ -128,6 +128,12 @@ it and handovers are silently dropped.
 A saved BMS address beats `CFG_BMS_MAC`, making the constant a seed rather than
 a commitment. See `decisions/0009`.
 
+It also stores a display name per BLE sensor, keyed by address, so a sensor can
+be called "Fridge" rather than `ATC_1a2b3c`. **NVS keys are capped at 15
+characters**, which is why the key is `n` plus the twelve hex digits of the MAC
+with its colons stripped - thirteen. A longer key is silently truncated by NVS,
+which would quietly make two sensors share a name.
+
 ### Alarms - `src/core/alarms.h`
 
 A fixed table of 16, no allocation. Raise and clear by id. Ids are prefixed by
@@ -275,6 +281,12 @@ Two things make it work:
   `-DCC_NATIVE_TEST`, which only `env:native` defines. Both types are
   singletons, so without a way back to empty each test case would inherit the
   last one's state. The firmware binary is byte-identical with and without them.
+
+The Climate page reads `BtHomeSensors` directly rather than through the
+registry, for the same reason the cell screen asks the BMS directly: it is a
+variable-length array of like things, and the entity model deliberately does
+not carry arrays. It is the same exception, not a new one - and the reason
+there is no `Registry::remove()` to worry about when a sensor slot is reused.
 
 `bthome.cpp` is here for the same reason: decoding a BTHome v2 advertisement is
 pure byte manipulation, and a wrong byte offset there does not crash anything -

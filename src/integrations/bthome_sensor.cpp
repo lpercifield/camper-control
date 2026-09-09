@@ -1,42 +1,75 @@
 #include "integrations/bthome_sensor.h"
 
+#include <string.h>
+
 #include "config.h"
-#include "core/registry.h"
 
 namespace cc {
 
-BtHomeSensor::BtHomeSensor(const BtHomeSensorConfig& cfg)
-    : cfg_(cfg),
-      temp_(cfg.tempId, cfg.tempName, Domain::Climate, "C", 1),
-      hum_(cfg.humId, cfg.humName, Domain::Climate, "%", 0),
-      batt_(cfg.battId, cfg.battName, Domain::Climate, "%", 0) {
-  if (cfg_.mac != nullptr) {
-    for (const char* p = cfg_.mac; *p; ++p) boundMac_.push_back(tolower(*p));
-  }
+const char* BtHomeSensor::displayName() const {
+  if (customName[0]) return customName;
+  if (advName[0]) return advName;
+  return mac;
 }
 
-bool BtHomeSensor::begin() {
-  Registry::instance().add(&temp_);
-  Registry::instance().add(&hum_);
-  Registry::instance().add(&batt_);
+const char* BtHomeSensor::subtitle() const {
+  return advName[0] ? advName : mac;
+}
 
-  // The scanner is started by the BLE client, which NimBLEDevice::init() lives
-  // inside. Registering is safe either way - BleScanner keeps listeners across
-  // its own begin() - but nothing will arrive unless something starts BLE.
+bool BtHomeSensor::stale() const {
+  return lastHeardMs == 0 || (millis() - lastHeardMs) > CFG_STALE_AFTER_MS;
+}
+
+// ---- the table --------------------------------------------------------------
+
+bool BtHomeSensors::begin() {
   BleScanner::instance().addListener(this);
-
-  setLink(LinkState::Searching, boundMac_.empty() ? "any BTHome" : boundMac_.c_str());
+  setLink(LinkState::Searching, "listening");
   return true;
 }
 
-void BtHomeSensor::onAdvertisement(const NimBLEAdvertisedDevice* device) {
+const BtHomeSensor* BtHomeSensors::at(size_t i) const {
+  if (i >= bound_) return nullptr;
+  return &slots_[i];
+}
+
+// Called only from onAdvertisement, i.e. only from the BLE host task, so the
+// table has exactly one writer and needs no lock of its own.
+BtHomeSensor* BtHomeSensors::findOrBind(const char* mac) {
+  for (size_t i = 0; i < bound_; i++) {
+    if (strcmp(slots_[i].mac, mac) == 0) return &slots_[i];
+  }
+
+  size_t idx;
+  if (bound_ < kMaxBtHomeSensors) {
+    idx = bound_;
+  } else {
+    // Full. Reuse whichever slot has been quiet longest - a phone under test
+    // rotates its advertising address every few minutes and would otherwise
+    // wedge the table shut against a real sensor.
+    idx = 0;
+    for (size_t i = 1; i < kMaxBtHomeSensors; i++) {
+      if (slots_[i].lastHeardMs < slots_[idx].lastHeardMs) idx = i;
+    }
+    log_i("sensor table full, reusing slot %u (%s)", (unsigned)idx,
+          slots_[idx].mac);
+  }
+
+  BtHomeSensor& s = slots_[idx];
+  s = BtHomeSensor{};
+  strncpy(s.mac, mac, sizeof(s.mac) - 1);
+  s.bound = true;
+  s.needsNameLoad = true;
+  __sync_synchronize();
+  if (idx == bound_) bound_ = idx + 1;
+  return &s;
+}
+
+void BtHomeSensors::onAdvertisement(const NimBLEAdvertisedDevice* device) {
   if (!device->haveServiceData()) return;
 
-  // Cheapest possible rejection first. This runs on the BLE host task for
-  // *every* advertisement from every device in range, so anything that
-  // allocates has to wait until we know the packet is ours. An earlier version
-  // built two std::strings per advertisement to compare the address before
-  // even looking at the UUID, and cost the main loop 13% of its rate.
+  // Cheapest rejection first: this runs for every advertisement from every
+  // device in range, so nothing may allocate until we know the packet is ours.
   static const NimBLEUUID kUuid(kBtHomeServiceUuid);
   const int count = static_cast<int>(device->getServiceDataCount());
   int idx = -1;
@@ -57,84 +90,82 @@ void BtHomeSensor::onAdvertisement(const NimBLEAdvertisedDevice* device) {
 
   std::string addr = device->getAddress().toString().c_str();
   for (auto& ch : addr) ch = tolower(ch);
-  if (!boundMac_.empty() && addr != boundMac_) return;
 
-  Reading next;
-  next.haveTemp = r.haveTemperature;
-  next.tempC = r.temperatureC;
-  next.haveHum = r.haveHumidity;
-  next.humPct = r.humidityPct;
-  next.haveBatt = r.haveBattery;
-  next.battPct = r.batteryPct;
+  BtHomeSensor* s = findOrBind(addr.c_str());
+  if (s == nullptr) return;
 
-  if (source_ != addr) {
-    log_i("%s: hearing %s", cfg_.name, addr.c_str());
-    source_ = addr;
-  }
-
-  // Fill the slot completely before publishing it - the main loop reads this
-  // without a lock. Losing one advertisement to a race is harmless; they
-  // arrive every few seconds.
-  pending_ = next;
-  __sync_synchronize();
-  havePending_ = true;
-}
-
-void BtHomeSensor::loop() {
-  if (havePending_) {
-    havePending_ = false;
-    __sync_synchronize();
-    const Reading r = pending_;
-
-    if (r.haveTemp) temp_.set(r.tempC);
-    if (r.haveHum) hum_.set(r.humPct);
-    if (r.haveBatt) batt_.set(static_cast<float>(r.battPct));
-
-    lastHeardMs_ = millis();
-    setLink(LinkState::Online, source_.c_str());
-
-    // Bring-up evidence: the numbers actually published, not just that
-    // something was heard. Only on a change - a serial write is by far the
-    // slowest thing in this function, and logging every reading on a timer
-    // tripped Hub's 50 ms guard at 66 ms. Belongs on the System page
-    // eventually; see ROADMAP.
-    const bool changed = !logged_ || r.tempC != lastTemp_ ||
-                         r.humPct != lastHum_ || r.battPct != lastBatt_;
-    if (changed) {
-      logged_ = true;
-      lastTemp_ = r.tempC;
-      lastHum_ = r.humPct;
-      lastBatt_ = r.battPct;
-      char t[16], h[16], b[16];
-      log_i("%s: temp=%s hum=%s batt=%s from %s", cfg_.name,
-            r.haveTemp ? temp_.format(t, sizeof(t)) : "--",
-            r.haveHum ? hum_.format(h, sizeof(h)) : "--",
-            r.haveBatt ? batt_.format(b, sizeof(b)) : "--", source_.c_str());
+  // The advertised name can arrive in a later packet than the readings, so
+  // take it whenever it shows up rather than only at bind time.
+  if (device->haveName()) {
+    const std::string n = device->getName();
+    if (!n.empty() && strncmp(s->advName, n.c_str(), sizeof(s->advName) - 1) != 0) {
+      strncpy(s->advName, n.c_str(), sizeof(s->advName) - 1);
+      s->advName[sizeof(s->advName) - 1] = '\0';
     }
   }
 
-  // Nothing to poll: entities carry their own update time and the UI greys
-  // them out on its own. All this tracks is whether the link still counts as
-  // up - and it is cosmetic, so it does not need doing on every pass.
-  //
-  // loop() runs upwards of 20,000 times a second, which makes even a millis()
-  // call a real per-iteration tax: millis() is a 64-bit division. Checking
-  // every 4096 passes is still several times a second against a 15 s timeout.
+  if (r.haveTemperature) {
+    s->tempC = r.temperatureC;
+    s->haveTemp = true;
+  }
+  if (r.haveHumidity) {
+    s->humPct = r.humidityPct;
+    s->haveHum = true;
+  }
+  if (r.haveBattery) {
+    s->battPct = r.batteryPct;
+    s->haveBatt = true;
+  }
+  // Published last: the UI treats lastHeardMs as "this row is worth drawing",
+  // so everything else has to be in place before it moves.
+  __sync_synchronize();
+  s->lastHeardMs = millis();
+}
+
+void BtHomeSensors::loop() {
+  // NVS must not be touched from the BLE task, so name loading lands here.
+  for (size_t i = 0; i < bound_; i++) {
+    if (!slots_[i].needsNameLoad) continue;
+    slots_[i].needsNameLoad = false;
+    Settings::instance().sensorName(slots_[i].mac, slots_[i].customName,
+                                    sizeof(slots_[i].customName));
+    log_i("sensor %s: adv='%s' name='%s'", slots_[i].mac, slots_[i].advName,
+          slots_[i].customName[0] ? slots_[i].customName : "(none)");
+  }
+
+  // loop() runs upwards of 20,000 times a second, so the link check is gated
+  // on a counter rather than paying for millis() every pass. See
+  // ADDING_AN_INTEGRATION.md.
   if ((++tick_ & 0x0FFF) != 0) return;
-  if (lastHeardMs_ != 0 && millis() - lastHeardMs_ > CFG_STALE_AFTER_MS) {
-    setLink(LinkState::Searching, "lost");
+
+  size_t live = 0;
+  for (size_t i = 0; i < bound_; i++) {
+    if (!slots_[i].stale()) live++;
+  }
+  if (live > 0) {
+    setLink(LinkState::Online, "listening");
+  } else {
+    setLink(LinkState::Searching, bound_ ? "lost" : "listening");
   }
 }
 
-BtHomeSensor& indoorSensor() {
-  static BtHomeSensorConfig cfg{
-      "Indoor sensor",
-      "climate.indoor_temp", "Indoor temp",
-      "climate.indoor_hum",  "Indoor humidity",
-      "climate.indoor_batt", "Sensor battery",
-      CFG_BTHOME_INDOOR_MAC,
-  };
-  static BtHomeSensor s(cfg);
+void BtHomeSensors::rename(const char* mac, const char* newName) {
+  if (mac == nullptr) return;
+  Settings::instance().setSensorName(mac, newName);
+  for (size_t i = 0; i < bound_; i++) {
+    if (strcmp(slots_[i].mac, mac) != 0) continue;
+    if (newName == nullptr) {
+      slots_[i].customName[0] = '\0';
+    } else {
+      strncpy(slots_[i].customName, newName, sizeof(slots_[i].customName) - 1);
+      slots_[i].customName[sizeof(slots_[i].customName) - 1] = '\0';
+    }
+    return;
+  }
+}
+
+BtHomeSensors& btHomeSensors() {
+  static BtHomeSensors s;
   return s;
 }
 
