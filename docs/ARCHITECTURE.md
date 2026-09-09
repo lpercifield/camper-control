@@ -57,6 +57,29 @@ members and outlive the registry's pointers; the registry never frees anything.
 `inDomain()` returns a `std::vector` by value and is called from the UI refresh
 at 4 Hz. That is a known wart - see `ROADMAP.md`.
 
+### BleScanner - `lib/BleSerialClient/BleScanner.h`
+
+NimBLE has one scan object and one set of scan callbacks, so whoever calls
+`setScanCallbacks()` last wins. `BleScanner` owns them and fans every
+advertisement out to registered listeners.
+
+**Never call `NimBLEDevice::getScan()` from anywhere else.** Implement
+`BleAdvertisementListener` and register it; the BLE client is one listener and
+carries no special status. The advertised-device pointer dies when the call
+returns, so copy what you need.
+
+It keeps scanning while a connection is up, which the controller time-slices:
+measured at ~3.8 advertisements/sec with the BMS `online`, with the cooperative
+loop unchanged (46,729 loops and 168 flushes per heartbeat against 46,821 and
+168 before). A scan costs ~1.5-2 KB of heap while a window is in flight.
+
+Connecting is the exception. NimBLE will not connect while scanning and
+`stop()` is asynchronous, so a would-be connector calls `pause()`, waits for
+`scanning()` to go false, connects, and calls `resume()` either way. `pause()`
+stops the current window immediately rather than letting it expire - a
+disconnect that waited out a 5 s window took 6,192 ms to reconnect against
+3,492 ms with no scanning at all.
+
 ### Integration - `src/core/integration.h`
 
 Everything that touches hardware. Three rules, and the first one is the one that
@@ -218,15 +241,15 @@ libraries do not expose - the same wall as `decisions/0004`.
 
 ## `src/core/` runs on a laptop
 
-`entity.cpp`, `registry.cpp` and `alarms.cpp` contain no hardware. That is not
-an accident of how they were written - it is a constraint, and `env:native` in
-`platformio.ini` enforces it:
+`entity.cpp`, `registry.cpp`, `alarms.cpp` and `bthome.cpp` contain no
+hardware. That is not an accident of how they were written - it is a
+constraint, and `env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~2 s, 56 cases, no board
+pio test -e native        # ~3 s, 73 cases, no board
 ```
 
-Those three files are the only ones the test environment compiles. Anything
+Those four files are the only ones the test environment compiles. Anything
 they include has to exist on a host compiler, so **a `#include` of a driver, a
 bus or NimBLE inside `src/core/` breaks the tests by construction** - which is
 the point. The rule is the whole reason this layer can be trusted while
@@ -243,6 +266,12 @@ Two things make it work:
   `-DCC_NATIVE_TEST`, which only `env:native` defines. Both types are
   singletons, so without a way back to empty each test case would inherit the
   last one's state. The firmware binary is byte-identical with and without them.
+
+`bthome.cpp` is here for the same reason: decoding a BTHome v2 advertisement is
+pure byte manipulation, and a wrong byte offset there does not crash anything -
+it puts a plausible, wrong temperature on the screen, which is the worst
+failure mode available. `BleScanner` hands it the bytes; it never touches a
+radio itself.
 
 `settings.cpp` is deliberately outside all of this. It needs `Preferences`,
 which is NVS, which is the board.

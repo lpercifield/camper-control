@@ -35,7 +35,9 @@ void BleSerialClient::onDisconnect(NimBLEClient* /*client*/, int reason) {
   TxCharacteristic = nullptr;
   RxCharacteristic = nullptr;
   peerAddress_.clear();
-  doScan = true;
+  // Let the scanner look again. It is the only thing that will re-find the BMS
+  // now, since this class no longer drives the scan itself.
+  BleScanner::instance().resume();
 }
 
 void BleSerialClient::onConnectFail(NimBLEClient* /*client*/, int reason) {
@@ -43,7 +45,8 @@ void BleSerialClient::onConnectFail(NimBLEClient* /*client*/, int reason) {
   log_w("BLE connect failed, reason %d", reason);
 }
 
-void BleSerialClient::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
+void BleSerialClient::onAdvertisement(const NimBLEAdvertisedDevice* advertisedDevice) {
+  if (bleConnected) return;  // already have our battery
   if (!advertisedDevice->haveServiceUUID()) return;
   if (!advertisedDevice->isAdvertisingService(serviceUUID)) return;
 
@@ -58,16 +61,9 @@ void BleSerialClient::onResult(const NimBLEAdvertisedDevice* advertisedDevice) {
   foundAddress = advertisedDevice->getAddress();
   haveFound = true;
   doConnect = true;
-  doScan = true;
-  NimBLEDevice::getScan()->stop();
-}
-
-void BleSerialClient::onScanEnd(const NimBLEScanResults& results, int /*reason*/) {
-  // Patch 3: the original restarted the scan from inside this callback, which
-  // kept the radio busy even while connected. bleLoop() decides when to look
-  // again; all we do here is release the result list.
-  log_i("scan complete, %d devices", results.getCount());
-  NimBLEDevice::getScan()->clearResults();
+  // Ask the scanner to stand down so the connect can proceed; bleLoop waits
+  // for it to actually be down before calling connect().
+  BleScanner::instance().pause();
 }
 
 void BleSerialClient::setTargetAddress(const char* mac) {
@@ -90,14 +86,8 @@ void BleSerialClient::begin(const char* name, bool enable_led, int led_pin) {
   pClient = NimBLEDevice::createClient();
   pClient->setClientCallbacks(this, false);
 
-  pBLEScan = NimBLEDevice::getScan();
-  pBLEScan->setScanCallbacks(this, false);
-  pBLEScan->setInterval(1349);
-  pBLEScan->setWindow(449);
-  pBLEScan->setActiveScan(true);
-  lastScanStartMs = millis();
-  doScan = true;
-  pBLEScan->start(5000, false, true);  // milliseconds in NimBLE 2.x
+  BleScanner::instance().begin();
+  BleScanner::instance().addListener(this);
   log_i("BLE begin exit");
 }
 
@@ -146,38 +136,39 @@ bool BleSerialClient::connectToServer() {
 }
 
 void BleSerialClient::bleLoop() {
+  // Whoever drives this loop drives the scanner too. The BMS task is the only
+  // caller today; if that ever stops being true this needs its own home.
+  BleScanner::instance().loop();
+
   if (millis() - flush_100ms >= (uint32_t)flush_time) flush();
+
+  if (!doConnect) {
+    BleScanner::instance().resume();
+    return;
+  }
 
   // NimBLE will not connect while a scan is running, and stop() is
   // asynchronous - it asks the controller to stop and returns. Connecting
-  // straight out of onResult() therefore fails every time. Wait for the
-  // scan to actually be down.
-  if (doConnect && !pBLEScan->isScanning() && millis() >= nextConnectMs) {
-    if (connectToServer()) {
-      doConnect = false;
-      connectAttempts = 0;
-      receiveBuffer.clear();
-    } else if (++connectAttempts < kMaxConnectAttempts) {
-      // Keep the address and try again shortly. A rescan costs six seconds and
-      // tells us nothing we do not already know.
-      nextConnectMs = millis() + 400;
-      haveFound = true;
-    } else {
-      doConnect = false;
-      connectAttempts = 0;  // give up on this address and look again
-    }
+  // straight out of the advertisement callback therefore fails every time.
+  // Wait for the scan to actually be down.
+  BleScanner::instance().pause();
+  if (BleScanner::instance().scanning() || millis() < nextConnectMs) return;
+
+  if (connectToServer()) {
+    doConnect = false;
+    connectAttempts = 0;
+    receiveBuffer.clear();
+  } else if (++connectAttempts < kMaxConnectAttempts) {
+    // Keep the address and try again shortly. A rescan costs six seconds and
+    // tells us nothing we do not already know.
+    nextConnectMs = millis() + 400;
+    haveFound = true;
+  } else {
+    doConnect = false;
+    connectAttempts = 0;  // give up on this address and look again
   }
 
-  if (bleConnected) return;
-
-  // Patch 2: asynchronous rescan, rate limited. The original used the blocking
-  // form of start(), freezing the caller for five seconds every pass while the
-  // BMS was out of range.
-  if (doScan && millis() - lastScanStartMs >= 6000) {
-    log_i("ble disconnected, rescanning");
-    lastScanStartMs = millis();
-    pBLEScan->start(5000, false, true);
-  }
+  if (!doConnect) BleScanner::instance().resume();
 }
 
 bool BleSerialClient::connected() { return bleConnected; }

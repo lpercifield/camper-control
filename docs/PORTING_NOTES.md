@@ -29,9 +29,12 @@ work that way, so every blocking wait had to go.
    original left dangling until the next connect.
 2. `bleLoop()` restarted scanning with the blocking form of `BLEScan::start()` -
    five seconds of frozen UI on every pass while the BMS was out of range. Now
-   asynchronous and rate limited to one scan attempt every six seconds.
-3. `scanCompleteCB()` used to restart the scan from inside the callback, keeping
-   the radio scanning even while connected. It now just releases the results.
+   asynchronous. It was also rate limited to one attempt every six seconds
+   until patch 9 moved scanning out of this class entirely.
+3. `scanCompleteCB()` used to restart the scan from inside the callback. The
+   objection is that the callback runs on the BLE host task, not that the radio
+   was busy - patch 9 deliberately keeps it scanning while connected. Restarts
+   are decided by a loop; the callback only releases the results.
 4. `flush()` wrote to `TxCharacteristic` without checking it was still valid.
    Guarded.
 5. Added `setTargetAddress()`. The original connected to the first device
@@ -47,6 +50,15 @@ work that way, so every blocking wait had to go.
 7. Added `peerAddress()`. The client knew which device it had connected to but
    never exposed it, so there was no way to remember a BMS across reboots. It
    is recorded on a successful connect and cleared on disconnect.
+9. **The class no longer owns the scan.** `BleScanner`
+   (`lib/BleSerialClient/BleScanner.h`) owns `NimBLEDevice::getScan()` and fans
+   advertisements out to listeners; `BleSerialClient` implements
+   `BleAdvertisementListener` like anything else and calls `pause()`/`resume()`
+   around a connect. NimBLE has exactly one set of scan callbacks, so as long
+   as this class claimed them no second consumer - a BLE temperature sensor -
+   could exist. Worse, the shipped `if (bleConnected) return;` meant the radio
+   stopped scanning entirely once the BMS connected. Measured on hardware
+   2026-09-09; see `ROADMAP.md` and `ARCHITECTURE.md`.
 8. Reading the protection thresholds is *not* free: each
    `get_0x2x_...()` is a blocking round trip that enters and leaves the BMS's
    factory mode, so the original's six back-to-back reads could stall for

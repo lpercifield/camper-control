@@ -22,72 +22,15 @@ and remembers its settings.
 
 ## Design gaps
 
-**1. No shared BLE scanner.** A BLE temperature sensor - indoor and outdoor is
-the next feature - needs advertisements, and today it would receive none.
+**1. No temperature sensor yet.** The plumbing is in - `BleScanner` fans
+advertisements out to listeners and keeps scanning while the BMS is connected,
+and `core/bthome.*` decodes BTHome v2 - but nothing has been bought and no
+integration registers a listener. That is the whole of what is left: pick a
+sensor, write the integration, publish two entities into `Domain::Climate`.
+
 Prefer broadcast sensors over connectable ones: a connectable sensor competes
 for the one connection slot the BMS holds, a broadcasting one costs nothing but
 scan time. That rules out most Inkbird models, which require a connection.
-
-Three separate things are in the way, and the third is the one that makes this
-more than a callback registry:
-
-1. `BleSerialClient::begin` calls `setScanCallbacks(this, ...)`, claiming the
-   single global scan callback. A second consumer has nowhere to register.
-2. `BleSerialClient::onResult` returns early unless the advertisement carries
-   the JBD service UUID, so a sensor packet is dropped before anything else
-   sees it.
-3. **The scan only runs while the BMS is being hunted.** `loop()` restarts it
-   only when `doScan` is set on a disconnect, so once the BMS reaches `online`
-   the radio is not scanning at all - which is exactly the steady state a
-   temperature sensor has to work in.
-
-So `NimBLEDevice::getScan()` has to become shared infrastructure that keeps
-scanning while the BMS connection is up and dispatches advertisements to
-registered listeners, with the BLE client as one of them. The connect attempt
-still has to pause it, because NimBLE will not connect while scanning
-(`decisions/0010`).
-
-**Measured on hardware 2026-09-09.** A throwaway spike kept the existing 5 s
-scans running while connected and counted advertisements. It works, and it is
-close to free:
-
-- **~4 advertisements/sec are delivered while the BMS link is up**, and the
-  link stays fully functional - it reached `online` and read its protection
-  limits with the scan running. The shipped build delivers exactly zero: the
-  counter sat frozen at 87 for the whole time it was connected.
-- **The cooperative loop does not notice.** 46,951 loops per 2 s heartbeat with
-  scanning against 46,821 without, and 168 flushes per heartbeat in both - a
-  0.3% difference, which is noise.
-- **Heap costs ~1.5-2 KB** while a scan is in flight, freed on
-  `clearResults()`. Free heap fluctuates 94.0-97.9 KB instead of sitting steady
-  at 97.2 KB. Against ~97 KB free that is affordable.
-
-**The one real cost is reconnect latency: 6,192 ms with scanning against
-3,492 ms without.** Forcing a disconnect 15 s after going online reconnected
-cleanly both ways, but the scanning build was ~2.7 s slower, because
-`bleLoop` waits for `!isScanning()` before it will connect and a 5 s scan
-window was already in flight. **The fix belongs in the implementation: stop the
-scan the moment a disconnect is seen, rather than letting the current window
-expire.** Untested, but it addresses the observed cause directly.
-
-While in there: `setActiveScan(true)` makes the ESP32 send scan requests that
-sensors must answer, which costs *their* battery. Passive scanning is enough
-for broadcast sensors; check whether BMS discovery still needs active.
-
-### Decode BTHome v2, not a vendor format
-
-The first decoder should target **BTHome v2**, not any one manufacturer:
-service data UUID `0xFCD2`, a device-info byte, then TLV objects. Temperature
-is `0x02`, `sint16` little-endian, x0.01; humidity is `0x03`, `uint16`
-little-endian, x0.01; battery percent is `0x01`. About forty lines against an
-open, versioned, published specification.
-
-The reason this is now the right target rather than a nice-to-have: **pvvx
-firmware 6.0 drops the non-standard formats and speaks only BTHome v2.** The
-ATC/custom parser the shortlist below used to imply would be written with an
-expiry date on it. One BTHome decoder instead covers the Xiaomi tags, Shelly
-BLU, b-parasite and most DIY sensors, and leaves any vendor quirk as an
-optional add-on rather than the load-bearing piece.
 
 ### Shortlist (revised 2026-09-09, nothing bought yet)
 
@@ -100,15 +43,17 @@ optional add-on rather than the load-bearing piece.
   **The catch:** this is the one SwitchBot device that does not follow
   SwitchBot's own documented BLE format, `SwitchBotAPI-BLE` issue 26 was closed
   without a resolution, and every decoder in the wild is reverse-engineered.
-  Budget ~15 lines and expect the two published decoders to disagree on byte
-  indices by exactly two, depending on whether they count the company ID.
+  It does **not** speak BTHome, so it needs ~15 lines of its own on top of
+  `bthome.*`, and expect the two published decoders to disagree on byte indices
+  by exactly two depending on whether they count the company ID.
 - **Indoor: Xiaomi LYWSD03MMC with pvvx firmware >= 6.0 in BTHome mode**,
   ~$5-8. Stock firmware encrypts its beacons; the community firmware reflashes
   over BLE from a browser - no hardware, no soldering. CR2032, roughly a year.
-  Same decoder as everything else once it is on BTHome.
+  Decodes with `core/bthome.*` as it stands, no new code.
 - **If nothing should need reflashing: Shelly BLU H&T**, ~$20-25. Speaks
-  BTHome v2 natively. CR2032 for ~3 years, IP54, -20 to 60 C - fine indoors,
-  but IP54 and a coin cell is not what to hang outside a van year-round.
+  BTHome v2 natively, so it also needs no new code. CR2032 for ~3 years, IP54,
+  -20 to 60 C - fine indoors, but IP54 and a coin cell is not what to hang
+  outside a van year-round.
 - **RuuviTag Pro** (~$40+) is the answer only if the van actually sees below
   -20 C. It is the one thing on this list rated to -40 C, IP67.
 
@@ -122,7 +67,11 @@ cold. The survey also listed "SwitchBot Meter (~$15, vendor-documented)" - the
 indoor Meter is documented, but the outdoor W3400010 recommended above is
 specifically the one that is not.
 
-None of this can receive a single packet until the shared scanner exists.
+**Still open:** `BleScanner` uses active scanning, which makes the ESP32 send
+scan requests that sensors must answer out of *their* battery. The BMS is found
+from a service UUID carried in the advertisement rather than the scan response,
+so this could probably be passive. Untested, and worth a measurement once there
+is a sensor whose battery life is worth protecting.
 
 **2. `Domain::System` has no page.** The enum and `domainName()` know about it;
 `kNavDomains` does not. Anything registered there - uptime, heap, link health,
@@ -188,6 +137,19 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
 ## Done
 
+- **Shared BLE scanner, and a BTHome v2 decoder** (2026-09-09).
+  `BleScanner` owns `NimBLEDevice::getScan()` and fans advertisements out to
+  registered listeners; `BleSerialClient` is now one listener among them rather
+  than the owner. Crucially it **keeps scanning while the BMS connection is
+  up**, which the shipped code never did - the advertisement counter used to
+  sit frozen for the whole time it was connected. Verified on hardware with a
+  temporary second listener: `listeners=2`, and the second one kept receiving
+  ~3.7 advertisements/sec with the BMS `online`. Costs the cooperative loop
+  nothing (46,729 loops and 168 flushes per heartbeat against 46,821 and 168
+  before) and ~1.5-2 KB of heap while a window is in flight.
+  `core/bthome.*` decodes BTHome v2 with 17 host tests, chosen over any vendor
+  format because pvvx >= 6.0 speaks only BTHome and one decoder covers the
+  Xiaomi tags, Shelly BLU and most DIY sensors. See `ARCHITECTURE.md`.
 - **Host tests for `src/core/`** (2026-09-08). `env:native` in `platformio.ini`
   builds `entity.cpp`, `registry.cpp` and `alarms.cpp` against a host compiler
   and a fake-clock `test_shim/Arduino.h`: 56 cases in about two seconds with no
@@ -266,14 +228,14 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
 
 ## Suggested order
 
-1. Shared BLE scanner (1), then the indoor and outdoor temperature sensors on
-   top of it. NimBLE makes this tractable; on Bluedroid it was not.
+1. Buy a sensor and write the integration (1). The scanner and the BTHome
+   decoder are in; this is now a shopping decision followed by one small file.
 2. Add the System page (2), and move the heartbeat and bus scan into it - they
    are the numbers that diagnosed most of this week, and they are only visible
    over a serial cable.
 3. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
 4. Resolve the build-system split (4).
 
-The test environment that used to head this list landed on 2026-09-08. The
-scanner is now the next thing to build: it makes the device more useful, and
-2-4 make it a product.
+The test environment landed 2026-09-08 and the shared scanner 2026-09-09, so
+what used to be the top two items are gone. 1 makes it useful; 2-4 make it a
+product.

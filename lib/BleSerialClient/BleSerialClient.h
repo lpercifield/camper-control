@@ -3,6 +3,8 @@
 
 #include <string>
 
+#include "BleScanner.h"
+
 #include "ByteRingBuffer.h"
 
 // Ported from Bluedroid to NimBLE - see docs/decisions/0010. The public
@@ -13,8 +15,10 @@
 #define RX_BUFFER_SIZE 4096
 #define FLUSH_TIME 1000
 
+// No longer a NimBLEScanCallbacks: BleScanner owns the scan and this is one
+// of its listeners. See BleScanner.h.
 class BleSerialClient : public NimBLEClientCallbacks,
-                        public NimBLEScanCallbacks,
+                        public BleAdvertisementListener,
                         public Stream {
  public:
   BleSerialClient();
@@ -39,9 +43,8 @@ class BleSerialClient : public NimBLEClientCallbacks,
   void onConnect(NimBLEClient* pClient) override;
   void onDisconnect(NimBLEClient* pClient, int reason) override;
   void onConnectFail(NimBLEClient* pClient, int reason) override;
-  // NimBLEScanCallbacks
-  void onResult(const NimBLEAdvertisedDevice* advertisedDevice) override;
-  void onScanEnd(const NimBLEScanResults& results, int reason) override;
+  // BleAdvertisementListener
+  void onAdvertisement(const NimBLEAdvertisedDevice* advertisedDevice) override;
 
   void bleLoop();
   bool connectToServer();
@@ -67,7 +70,6 @@ class BleSerialClient : public NimBLEClientCallbacks,
   BleSerialClient(BleSerialClient const& other) = delete;
   void operator=(BleSerialClient const& other) = delete;
 
-  NimBLEScan* pBLEScan = nullptr;
   NimBLEUUID serviceUUID;
   NimBLEUUID charRxUUID;
   NimBLEUUID charTxUUID;
@@ -84,12 +86,10 @@ class BleSerialClient : public NimBLEClientCallbacks,
   size_t numAvailableLines = 0;
   uint8_t transmitBuffer[BLE_BUFFER_SIZE];
   bool doConnect = false;
-  bool doScan = false;
   uint16_t MTU = 0;
   uint16_t maxTransferSize = BLE_BUFFER_SIZE;
   uint32_t flush_100ms = 0;
   int flush_time = FLUSH_TIME;
-  uint32_t lastScanStartMs = 0;
   // HCI 0x3e (connection failed to be established) is common and transient.
   // We already know the address, so retry the connect before paying for a
   // whole rescan cycle.
