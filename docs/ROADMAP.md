@@ -6,8 +6,10 @@ Last reviewed 2026-09-09.
 
 Runs on hardware. Boots, drives the panel, reads touch, and carries a Settings
 overlay whose values survive a power cycle. Flash 49.2%, static RAM 32.6%,
-**~97 KB free heap** since the NimBLE port. Main loop ~46k iterations/sec, LVGL ~48 flushes/sec, and no
-integration holds the loop.
+**~97 KB free heap** since the NimBLE port. Main loop ~23k iterations/sec and
+LVGL ~84 flushes/sec, re-measured on hardware 2026-09-09 - the older "~46k
+loops/sec, ~48 flushes/sec" read the cumulative heartbeat counters as if they
+were rates. No integration holds the loop.
 
 The BMS connects on the remembered address and reaches `online`, so the live
 pack display works. **There are no blockers left.** What remains is the
@@ -43,9 +45,30 @@ So `NimBLEDevice::getScan()` has to become shared infrastructure that keeps
 scanning while the BMS connection is up and dispatches advertisements to
 registered listeners, with the BLE client as one of them. The connect attempt
 still has to pause it, because NimBLE will not connect while scanning
-(`decisions/0010`). **UNVERIFIED:** the ESP32 controller is expected to
-time-slice a scan against an active connection - it is what ESP32 BLE proxies
-do - but that has not been observed on this board.
+(`decisions/0010`).
+
+**Measured on hardware 2026-09-09.** A throwaway spike kept the existing 5 s
+scans running while connected and counted advertisements. It works, and it is
+close to free:
+
+- **~4 advertisements/sec are delivered while the BMS link is up**, and the
+  link stays fully functional - it reached `online` and read its protection
+  limits with the scan running. The shipped build delivers exactly zero: the
+  counter sat frozen at 87 for the whole time it was connected.
+- **The cooperative loop does not notice.** 46,951 loops per 2 s heartbeat with
+  scanning against 46,821 without, and 168 flushes per heartbeat in both - a
+  0.3% difference, which is noise.
+- **Heap costs ~1.5-2 KB** while a scan is in flight, freed on
+  `clearResults()`. Free heap fluctuates 94.0-97.9 KB instead of sitting steady
+  at 97.2 KB. Against ~97 KB free that is affordable.
+
+**The one real cost is reconnect latency: 6,192 ms with scanning against
+3,492 ms without.** Forcing a disconnect 15 s after going online reconnected
+cleanly both ways, but the scanning build was ~2.7 s slower, because
+`bleLoop` waits for `!isScanning()` before it will connect and a 5 s scan
+window was already in flight. **The fix belongs in the implementation: stop the
+scan the moment a disconnect is seen, rather than letting the current window
+expire.** Untested, but it addresses the observed cause directly.
 
 While in there: `setActiveScan(true)` makes the ESP32 send scan requests that
 sensors must answer, which costs *their* battery. Passive scanning is enough

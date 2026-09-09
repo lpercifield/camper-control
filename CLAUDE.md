@@ -42,8 +42,11 @@ The rule this project learned the hard way: **get evidence before forming a
 theory, and never state a cause you have not observed.**
 
 1. **Is the loop running?** `displayLoop` logs `hb: loops=... flushes=...`.
-   Healthy is ~46k loops/sec and ~48 flushes/sec. If `loops` is stuck, an
-   integration is blocking and nothing else you observe means anything yet.
+   Both are **cumulative counters printed every 2 s**, so read the delta
+   between two lines, not the number itself. Measured on hardware 2026-09-09:
+   healthy is **~46,800 loops and 168 flushes per heartbeat**, i.e. ~23k
+   loops/sec and ~84 flushes/sec. If `loops` is stuck, an integration is
+   blocking and nothing else you observe means anything yet.
 2. **Is the panel alive?** `g_gfx->fillScreen(RED); delay(1000);` right after
    `g_gfx->begin()` separates a dead panel from a silent LVGL.
 3. Only then reason about the diff.
