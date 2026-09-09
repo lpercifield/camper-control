@@ -1,6 +1,6 @@
 # Roadmap
 
-Last reviewed 2026-09-08.
+Last reviewed 2026-09-09.
 
 ## Where it actually is
 
@@ -21,30 +21,83 @@ and remembers its settings.
 ## Design gaps
 
 **1. No shared BLE scanner.** A BLE temperature sensor - indoor and outdoor is
-the next feature - needs advertisements, but `BleSerialClient` owns the scanner
-outright and stops it while connected, so a second consumer receives nothing.
-`NimBLEDevice::getScan()` needs to become shared infrastructure that dispatches
-advertisements to registered listeners, with the BLE client as one of them.
-Prefer broadcast sensors over connectable ones; a connectable sensor competes
-for a connection slot, a broadcasting one costs nothing but scan time. That
-rules out most Inkbird models, which require a connection.
+the next feature - needs advertisements, and today it would receive none.
+Prefer broadcast sensors over connectable ones: a connectable sensor competes
+for the one connection slot the BMS holds, a broadcasting one costs nothing but
+scan time. That rules out most Inkbird models, which require a connection.
 
-Shortlist from the 2026-09-07 survey, nothing bought yet:
+Three separate things are in the way, and the third is the one that makes this
+more than a callback registry:
 
-- **Indoor: Xiaomi LYWSD03MMC with ATC/pvvx firmware**, ~$5-8. Stock firmware
-  encrypts its beacons; the community firmware reflashes over BLE from a
-  browser - no hardware, no soldering - and then broadcasts temperature,
-  humidity and battery in a documented format. The default answer for ESP32
-  projects. CR2032, roughly a year.
-- **Outdoor: RuuviTag**, ~$30-40. Open published format, no reflashing, rated
-  well below freezing, IP67 on the weatherproof variants. The price is the
-  objection; the cold tolerance is the reason. A CR2032 sags badly below
-  freezing, so an indoor-grade tag outside reads fine in autumn and dies in
-  February.
-- **No-reflash alternatives:** Govee H5075 (~$12, format community-derived but
-  stable), SwitchBot Meter (~$15, vendor-documented), or the older round Mijia
-  LYWSDCGQ which broadcasts unencrypted in stock firmware and runs on AAA -
-  better in cold than a coin cell.
+1. `BleSerialClient::begin` calls `setScanCallbacks(this, ...)`, claiming the
+   single global scan callback. A second consumer has nowhere to register.
+2. `BleSerialClient::onResult` returns early unless the advertisement carries
+   the JBD service UUID, so a sensor packet is dropped before anything else
+   sees it.
+3. **The scan only runs while the BMS is being hunted.** `loop()` restarts it
+   only when `doScan` is set on a disconnect, so once the BMS reaches `online`
+   the radio is not scanning at all - which is exactly the steady state a
+   temperature sensor has to work in.
+
+So `NimBLEDevice::getScan()` has to become shared infrastructure that keeps
+scanning while the BMS connection is up and dispatches advertisements to
+registered listeners, with the BLE client as one of them. The connect attempt
+still has to pause it, because NimBLE will not connect while scanning
+(`decisions/0010`). **UNVERIFIED:** the ESP32 controller is expected to
+time-slice a scan against an active connection - it is what ESP32 BLE proxies
+do - but that has not been observed on this board.
+
+While in there: `setActiveScan(true)` makes the ESP32 send scan requests that
+sensors must answer, which costs *their* battery. Passive scanning is enough
+for broadcast sensors; check whether BMS discovery still needs active.
+
+### Decode BTHome v2, not a vendor format
+
+The first decoder should target **BTHome v2**, not any one manufacturer:
+service data UUID `0xFCD2`, a device-info byte, then TLV objects. Temperature
+is `0x02`, `sint16` little-endian, x0.01; humidity is `0x03`, `uint16`
+little-endian, x0.01; battery percent is `0x01`. About forty lines against an
+open, versioned, published specification.
+
+The reason this is now the right target rather than a nice-to-have: **pvvx
+firmware 6.0 drops the non-standard formats and speaks only BTHome v2.** The
+ATC/custom parser the shortlist below used to imply would be written with an
+expiry date on it. One BTHome decoder instead covers the Xiaomi tags, Shelly
+BLU, b-parasite and most DIY sensors, and leaves any vendor quirk as an
+optional add-on rather than the load-bearing piece.
+
+### Shortlist (revised 2026-09-09, nothing bought yet)
+
+- **Outdoor: SwitchBot Indoor/Outdoor Thermo-Hygrometer (W3400010)**, $14.99.
+  Broadcasts unencrypted with no pairing, so it never touches the connection
+  slot: temperature and humidity in manufacturer data (company `0x0969`),
+  battery in service data (UUID `0xFD3D`, device type `'w'`). 2xAAA for about
+  two years, IP65, -20 to 60 C. The AAA cells are the point - they behave far
+  better in cold than a coin cell, and take lithium AAAs if it gets serious.
+  **The catch:** this is the one SwitchBot device that does not follow
+  SwitchBot's own documented BLE format, `SwitchBotAPI-BLE` issue 26 was closed
+  without a resolution, and every decoder in the wild is reverse-engineered.
+  Budget ~15 lines and expect the two published decoders to disagree on byte
+  indices by exactly two, depending on whether they count the company ID.
+- **Indoor: Xiaomi LYWSD03MMC with pvvx firmware >= 6.0 in BTHome mode**,
+  ~$5-8. Stock firmware encrypts its beacons; the community firmware reflashes
+  over BLE from a browser - no hardware, no soldering. CR2032, roughly a year.
+  Same decoder as everything else once it is on BTHome.
+- **If nothing should need reflashing: Shelly BLU H&T**, ~$20-25. Speaks
+  BTHome v2 natively. CR2032 for ~3 years, IP54, -20 to 60 C - fine indoors,
+  but IP54 and a coin cell is not what to hang outside a van year-round.
+- **RuuviTag Pro** (~$40+) is the answer only if the van actually sees below
+  -20 C. It is the one thing on this list rated to -40 C, IP67.
+
+**Correction to the 2026-09-07 survey.** That survey chose RuuviTag for outdoor
+at $30-40 because it was "rated well below freezing", against a coin cell that
+"dies in February". That is wrong for the standard tag: **RuuviTag on its stock
+battery is rated -20 to +70 C**, the same as the $14.99 SwitchBot. Only
+RuuviTag *Pro* reaches -40 C. The stated reason for paying two to three times
+more did not hold, and the cheaper sensor has the better battery chemistry for
+cold. The survey also listed "SwitchBot Meter (~$15, vendor-documented)" - the
+indoor Meter is documented, but the outdoor W3400010 recommended above is
+specifically the one that is not.
 
 None of this can receive a single packet until the shared scanner exists.
 
