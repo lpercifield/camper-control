@@ -73,6 +73,18 @@ measured at ~3.8 advertisements/sec with the BMS `online`, with the cooperative
 loop unchanged (46,729 loops and 168 flushes per heartbeat against 46,821 and
 168 before). A scan costs ~1.5-2 KB of heap while a window is in flight.
 
+**The connection budget is three.** `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` defaults
+to 3 and this project does not override it, so the BMS leaves two slots. That
+is a hard ceiling on connectable accessories - the lighting plan in
+`decisions/0012` spends both of them - and raising it costs RAM. Prefer a
+broadcaster over a connectable device wherever the accessory allows it; a
+listener on this scanner costs nothing but scan time. **UNVERIFIED:** only one
+connection has ever been open on this board at once.
+
+The one-client limit on the JBD BMS is a property of the battery, not of this
+radio, and the two are easy to confuse - `ROADMAP.md` asserted "one BLE
+connection only" for two days on the strength of it.
+
 Connecting is the exception. NimBLE will not connect while scanning and
 `stop()` is asynchronous, so a would-be connector calls `pause()`, waits for
 `scanning()` to go false, connects, and calls `resume()` either way. `pause()`

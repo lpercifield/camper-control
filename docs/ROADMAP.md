@@ -113,6 +113,40 @@ can dump the flash. See `decisions/0009`.
 **4. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
 looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
+**5. Lighting has a page and no integration.** The plan is settled and the
+hardware is not bought: each fixture gets its own BLE LED controller, powered
+from the 12 V run that already feeds it, so an existing run becomes a
+controllable light **without pulling any new control wiring** - which is the
+entire point, and the reason the obvious answer of PWM from the RP2040 was
+rejected. Reasoning and the rejected alternatives are in `decisions/0012`.
+
+Reference part is the **SP107E**, ~$15: DC5-24 V so it survives a bank that
+absorbs at 14.6 V, up to 960 pixels, WS2813/WS2815/WS2818, remembers its state
+across a power cut, rated -20 to 60 C. Service `0xFFE0`, characteristic
+`0xFFE1`, four-byte commands, and it reads its own state back (`0x01`, `0x02`)
+so `confirm()` can be honest.
+
+Three things gate it:
+
+- **Fix the scanner starvation first.** A second connectable device adds its
+  own connect and reconnect cycles to a scanner that is already held down
+  across the BMS's, and the temperature sensors starve. This is a prerequisite,
+  not a follow-up. See the item under Smaller things.
+- **Two controllers is the ceiling.** NimBLE allows three connections and the
+  BMS holds one. A third fixture means raising
+  `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` and paying RAM for it, or moving lighting
+  to Wi-Fi. **UNVERIFIED:** two simultaneous connections have never been made
+  on this board.
+- **Confirm RGBW before ordering.** The listed ICs are RGB, and RGB white is
+  muddy in a cabin. WS2814 is the 12 V RGBW part; whether this controller
+  drives it is unconfirmed.
+
+The protocol is close to the SP110E's but not the same - off is `0xBB` not
+`0xAB`, colour `0x0C` not `0x1E` - and the readback payload is only partly
+mapped, so the integration wants a real device in hand before it is written.
+Budget ~0.2 A per fixture of idle draw, controller plus pixel ICs, with the
+lights off.
+
 ## Smaller things
 
 - **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
@@ -248,8 +282,16 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
 ## Known and accepted
 
 No audible alarm - the buzzer is on the RP2040 and needs the UART link.
-The RP2040 is otherwise idle. One BLE connection only. All recorded in
-`PORTING_NOTES.md` and `decisions/0003`.
+The RP2040 is otherwise idle. See `PORTING_NOTES.md`.
+
+This section used to say "one BLE connection only", citing `decisions/0003` and
+`PORTING_NOTES.md`. Both citations were wrong: `0003` was superseded by `0010`
+when the NimBLE port landed, and `PORTING_NOTES.md` never carried the claim.
+NimBLE allows **three** connections and this project does not override the
+default, so the BMS leaves two spare. Corrected 2026-09-09 - the claim had
+been quietly ruling out a whole class of accessory. The one-client limit that
+does exist is on the JBD BMS itself, not on this radio; see
+`TROUBLESHOOTING.md`.
 
 ## Suggested order
 
@@ -258,9 +300,12 @@ The RP2040 is otherwise idle. One BLE connection only. All recorded in
 2. Add the System page (2), and move the heartbeat and bus scan into it - they
    are the numbers that diagnosed most of this week, and they are only visible
    over a serial cable.
-3. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
-4. Resolve the build-system split (4).
+3. Lights (5), once the scanner starvation is fixed and a controller is in
+   hand. The decision is made; what is left is the protocol capture and one
+   integration file.
+4. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
+5. Resolve the build-system split (4).
 
 The test environment landed 2026-09-08 and the shared scanner 2026-09-09, so
-what used to be the top two items are gone. 1 makes it useful; 2-4 make it a
-product.
+what used to be the top two items are gone. 1 and 3 make it useful; the rest
+make it a product.
