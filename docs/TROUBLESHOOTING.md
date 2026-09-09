@@ -15,6 +15,7 @@ Every entry here happened; none are hypothetical.
 | A literal `f` where a number should be | [UI](#ui) |
 | A label drifts out of position as its value grows | [UI](#ui) |
 | Cell bars blink on and off | [Data](#data) |
+| Temperature readings stale while BMS reconnects | [Data](#data) |
 
 ## First moves
 
@@ -199,6 +200,18 @@ a campground is somebody else's pack; the Settings page shows and clears it.
 
 **BMS connects, then will not reconnect** - a JBD BMS accepts one client at a
 time. The Xiaoxiang/Overkill phone app will hold it. Close the app.
+
+**Temperature readings go stale whenever the BMS is reconnecting** - the
+Climate page greys out and the sensor's link drops `online -> searching`,
+recovering only once the BMS is connected again. Nothing is wrong with the
+sensor. NimBLE will not connect while a scan is running, so `BleSerialClient`
+calls `BleScanner::pause()` across the whole connect sequence - and a connect
+failing with HCI `0x3e` retries four times at a 5 s timeout each. A BMS that is
+powered but not answering therefore holds the scanner down for twenty seconds
+at a stretch, and every other listener starves. Observed 2026-09-09:
+`scanning=0 paused=1` for most of a 45 s log, with advertisements down to
+~1.7/s from ~5.5/s. The fix is to resume the scanner between attempts rather
+than across the whole cycle; see `ROADMAP.md`.
 
 **`connect failed, reason 574`** or similar. NimBLE encodes HCI errors as
 `0x200 + code`, so 574 is `0x23e` - HCI `0x3e`, "connection failed to be

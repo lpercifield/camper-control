@@ -22,11 +22,19 @@ and remembers its settings.
 
 ## Design gaps
 
-**1. No temperature sensor yet.** The plumbing is in - `BleScanner` fans
-advertisements out to listeners and keeps scanning while the BMS is connected,
-and `core/bthome.*` decodes BTHome v2 - but nothing has been bought and no
-integration registers a listener. That is the whole of what is left: pick a
-sensor, write the integration, publish two entities into `Domain::Climate`.
+**1. No temperature sensor has been bought.** Everything else is done and
+proven: `BleScanner` fans advertisements out to listeners, `core/bthome.*`
+decodes BTHome v2, and `integrations/bthome_sensor.*` publishes temperature,
+humidity and sensor battery into `Domain::Climate`. The whole path was verified
+on 2026-09-09 against a synthetic BTHome advertisement broadcast from an
+Android phone - `40 01 54 02 C4 09 03 BF 13` under service UUID `0xFCD2` came
+out as 25.0 C, 51% and 84% on the Climate page. What is left is a purchase.
+
+`CFG_BTHOME_INDOOR_MAC` is empty, which means bring-up mode: attach to any
+BTHome advertiser heard. That is what makes the phone test work at all, since
+Android rotates its advertising address - it changed three times during
+testing. Set a real address once there is a real sensor, and add a second
+config for outdoor.
 
 Prefer broadcast sensors over connectable ones: a connectable sensor competes
 for the one connection slot the BMS holds, a broadcasting one costs nothing but
@@ -103,6 +111,12 @@ looks maintained. Delete it or put it in CI. See `decisions/0006`.
   the same thing. Removing the include should let the workaround go with it -
   worth doing before Wi-Fi lands for real, so the dependency is deliberate
   rather than accidental.
+- **A BMS that cannot connect starves every other BLE listener.**
+  `BleSerialClient` pauses the shared scanner for the whole connect sequence,
+  and a connect failing with HCI `0x3e` retries four times at a 5 s timeout, so
+  the scanner can sit paused for twenty seconds at a stretch and temperature
+  readings go stale. Observed 2026-09-09; see `TROUBLESHOOTING.md`. The fix is
+  to resume the scanner between attempts rather than across the whole cycle.
 - **An entity updated in the first millisecond after boot reads as never
   updated.** `Entity` encodes "never updated" as `updatedMs_ == 0`, which is
   also a legitimate value of `millis()`, so such a value shows `--` until the

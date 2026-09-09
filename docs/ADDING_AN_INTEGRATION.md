@@ -60,6 +60,23 @@ reading. No UI code changes.
 - **`loop()` returns promptly.** Poll on a timer, drive a state machine, never
   spin waiting for a reply. Anything that genuinely must block gets its own
   FreeRTOS task and publishes results through entities.
+- **`loop()` is called upwards of 20,000 times a second**, so "cheap" is not
+  the same as free. A single `millis()` per pass is a real tax - it is a 64-bit
+  division - and a `log_i()` on a timer inside `loop()` was enough to trip the
+  50 ms guard at 66 ms. Do periodic housekeeping on a counter instead, and log
+  on change rather than on a clock:
+
+  ```cpp
+  void loop() override {
+    if (!newDataArrived()) {
+      // ~5 Hz, and no millis() on the hot path
+      if ((++tick_ & 0x0FFF) != 0) return;
+      checkForTimeout();
+      return;
+    }
+    publish();
+  }
+  ```
 - **Confirm, do not assume.** `SwitchEntity::command()` asks the hardware;
   `confirm()` records what it actually did. A relay node that has gone offline
   should show the truth, not the last thing we wished for.

@@ -104,6 +104,15 @@ Owns the list, calls `begin()` once and `loop()` forever. Deliberately tiny. It
 does no scheduling, no priorities and no error recovery; if an integration needs
 those, it implements them itself.
 
+It times each `loop()` and names anyone holding it past `kSlowLoopWarnMs`. That
+timing is not free: the loop runs upwards of 20,000 times a second, so it uses
+`esp_timer_get_time()` and takes **one reading per boundary rather than two per
+integration**. It used to call `millis()` twice per integration, and `millis()`
+is `esp_timer_get_time()/1000` - a 64-bit division. Adding a second integration
+whose `loop()` does almost nothing cost 12% of the main loop rate, 46,700 to
+40,800 per 2 s heartbeat, essentially all of it in the instrumentation rather
+than the work. Measured 2026-09-09.
+
 ### Settings - `src/core/settings.h`
 
 The only thing in the project that persists anything. NVS through
