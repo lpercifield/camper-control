@@ -156,6 +156,39 @@ lights off.
   the same thing. Removing the include should let the workaround go with it -
   worth doing before Wi-Fi lands for real, so the dependency is deliberate
   rather than accidental.
+- **Wi-Fi and BLE do coexist on this board, and the bill is mostly heap.**
+  Measured 2026-09-10, because the ESP-NOW lighting idea needs the Wi-Fi radio
+  while the van needs BLE continuously, and the two share one 2.4 GHz radio.
+  With `WiFi.mode(WIFI_STA)` and `esp_now_init()` running alongside the BMS
+  connection and the sensor scan:
+
+  | | Advertisements | Loops / 2 s | Free heap |
+  |---|---|---|---|
+  | BLE only | 4.93/s | ~46,500 | ~95 KB |
+  | Wi-Fi up, silent | 3.29/s | ~43,800 | ~54 KB |
+  | ESP-NOW at 4 Hz | 3.52/s | ~41,600 | ~53 KB |
+
+  Nothing broke. ESP-NOW delivered 195 of 195 packets in each run, the BMS
+  connected and stayed online, no integration held the loop, and the UI kept
+  flushing. **Wi-Fi costs 41,392 bytes** - within a hundred bytes of the ~41 KB
+  this file already predicted.
+
+  The useful detail is which cost comes from what. Advertisement reception
+  falls the moment the radio comes up and transmitting barely adds to it (3.29
+  against 3.52/s, inside the spread), so there is no send-rate to tune - the
+  loss is the price of the radio existing. Transmitting does cost loop rate,
+  about 5% on top, and 4 Hz is far more traffic than light commands would ever
+  generate.
+
+  So the direction is viable. The reservation is heap: 54 KB free against 95 KB
+  is less than half the headroom, and the System page, more sensors and the
+  Wi-Fi backhaul all still want room. Note that the 41 KB is paid once - if the
+  backhaul lands later it is the same stack, so ESP-NOW for lighting is
+  effectively free on top of a decision this project already wants to make.
+
+  **UNVERIFIED:** the spike never received an ESP-NOW packet or drove a light,
+  and Wi-Fi was in station mode joined to nothing. A real backhaul associated
+  with an access point is a heavier radio load than this measured.
 - **A longer BLE connection interval measured worse, not better.** The BMS link
   runs on NimBLE's default 50 ms interval and is polled twice a second
   (`kRefreshMs` is 500), so the radio wakes roughly 15 times more often than
