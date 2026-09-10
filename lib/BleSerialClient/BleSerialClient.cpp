@@ -17,6 +17,19 @@ static void notifyCallback(NimBLERemoteCharacteristic* /*characteristic*/,
 
 BleSerialClient::BleSerialClient() {}
 
+// OFF, and deliberately so. Asking the BMS for a 200 ms interval works - it
+// accepts, and the negotiated values come back 200 ms / 4000 ms - but measured
+// on hardware 2026-09-10 it made advertisement reception *worse*, from a mean
+// 4.93/s across two runs to 4.03/s across two runs. The prediction was that
+// waking the radio 4x less often would free airtime for scanning; it did not,
+// and the mechanism is not understood.
+//
+// Left in, off, because the lever is proven and the lighting plan
+// (decisions/0012) is the case it was meant for: with two more connections
+// contending there may be a trade worth making, and it can be measured then
+// rather than assumed now. Flip to 1 to re-run the comparison.
+#define CONN_PARAM_TUNING 0
+
 void BleSerialClient::onConnect(NimBLEClient* /*client*/) {
   log_i("BLE connected");
   bleConnected = true;
@@ -97,6 +110,14 @@ bool BleSerialClient::connectToServer() {
 
   pClient->setConnectTimeout(5000);
 
+#if CONN_PARAM_TUNING
+  // Asked for before connecting, so the link comes up on these rather than
+  // negotiating twice. This is a request: the peripheral may refuse it, which
+  // is exactly why the negotiated values are logged below rather than assumed.
+  pClient->setConnectionParams(kConnItvlMin, kConnItvlMax, kConnLatency,
+                               kConnTimeout);
+#endif
+
   // Patch 6: the original discarded this result and logged success regardless.
   // A failed connect then called getService() on a dead handle, which blocks
   // waiting for a discovery event that never arrives.
@@ -132,7 +153,18 @@ bool BleSerialClient::connectToServer() {
   }
 
   bleConnected = true;
+  logConnParams("negotiated");
+  connParamRecheckMs_ = millis() + 10000;
+  connParamRechecked_ = false;
   return true;
+}
+
+void BleSerialClient::logConnParams(const char* when) {
+  if (pClient == nullptr) return;
+  NimBLEConnInfo info = pClient->getConnInfo();
+  log_i("conn params %s: interval %.1f ms, latency %u, timeout %u ms, mtu %u",
+        when, info.getConnInterval() * 1.25f, (unsigned)info.getConnLatency(),
+        (unsigned)info.getConnTimeout() * 10, (unsigned)info.getMTU());
 }
 
 void BleSerialClient::bleLoop() {
@@ -141,6 +173,12 @@ void BleSerialClient::bleLoop() {
   BleScanner::instance().loop();
 
   if (millis() - flush_100ms >= (uint32_t)flush_time) flush();
+
+  if (bleConnected && !connParamRechecked_ && connParamRecheckMs_ != 0 &&
+      millis() >= connParamRecheckMs_) {
+    connParamRechecked_ = true;
+    logConnParams("after 10 s");
+  }
 
   if (!doConnect) {
     BleScanner::instance().resume();

@@ -47,6 +47,7 @@ class BleSerialClient : public NimBLEClientCallbacks,
   void onAdvertisement(const NimBLEAdvertisedDevice* advertisedDevice) override;
 
   void bleLoop();
+  void logConnParams(const char* when);
   bool connectToServer();
   bool connected();
   // Address of the peer we actually connected to, or "" when not connected.
@@ -90,6 +91,28 @@ class BleSerialClient : public NimBLEClientCallbacks,
   uint16_t maxTransferSize = BLE_BUFFER_SIZE;
   uint32_t flush_100ms = 0;
   int flush_time = FLUSH_TIME;
+  // Connection parameters. NimBLE's defaults are a 30-50 ms interval, which
+  // wakes the radio 20-33 times a second to service a BMS we poll twice a
+  // second (kRefreshMs is 500). Every one of those events is airtime not
+  // available for scanning or for a second connection, and the lighting plan
+  // in decisions/0012 wants both.
+  //
+  // The binding constraint is that the BMS protocol is request/response, so a
+  // round trip costs at least two intervals. At 200 ms that is ~400 ms against
+  // a 500 ms poll period - it fits, without much room, which is why the
+  // ceiling here is 200 and not more.
+  //
+  // Units: interval is 1.25 ms, timeout is 10 ms.
+  static constexpr uint16_t kConnItvlMin = 96;   // 120 ms
+  static constexpr uint16_t kConnItvlMax = 160;  // 200 ms
+  static constexpr uint16_t kConnLatency = 0;    // pack-powered; answer promptly
+  static constexpr uint16_t kConnTimeout = 400;  // 4000 ms
+  // Re-read the negotiated parameters once, a little after connecting: a
+  // peripheral may renegotiate, and what we asked for is not evidence of what
+  // we got.
+  uint32_t connParamRecheckMs_ = 0;
+  bool connParamRechecked_ = false;
+
   // HCI 0x3e (connection failed to be established) is common and transient.
   // We already know the address, so retry the connect before paying for a
   // whole rescan cycle.

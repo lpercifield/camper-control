@@ -156,6 +156,24 @@ lights off.
   the same thing. Removing the include should let the workaround go with it -
   worth doing before Wi-Fi lands for real, so the dependency is deliberate
   rather than accidental.
+- **A longer BLE connection interval measured worse, not better.** The BMS link
+  runs on NimBLE's default 50 ms interval and is polled twice a second
+  (`kRefreshMs` is 500), so the radio wakes roughly 15 times more often than
+  the data needs. Asking for 200 ms works - the BMS accepts, and the negotiated
+  values come back 200 ms with a 4000 ms supervision timeout - but measured on
+  2026-09-10 it took advertisement reception *down*, from a mean 4.93/s across
+  two runs to 4.03/s across two. Loop rate and BMS function were unaffected
+  either way. The prediction was that waking the radio four times less often
+  would free airtime for scanning; it did not, and **the mechanism is not
+  understood**. Left in `BleSerialClient.cpp` behind `CONN_PARAM_TUNING`,
+  defaulting off. Worth re-running when a second connection actually contends
+  for the radio - which is the lighting plan in `decisions/0012` - because that
+  is the case it was meant for and the only one where the trade can be judged.
+- **The BLE MTU never negotiates up.** `BleSerialClient.h` defines `MIN_MTU 50`
+  and `BLE_BUFFER_SIZE 512`, but the link comes up at the 23-byte default -
+  20 bytes of payload per write - and stays there. Nothing asks for more.
+  Whether that costs anything on a protocol whose frames are short is not
+  measured, but the constant claims an intent the code does not carry out.
 - **A BMS that cannot connect starves every other BLE listener.**
   `BleSerialClient` pauses the shared scanner for the whole connect sequence,
   and a connect failing with HCI `0x3e` retries four times at a 5 s timeout, so
