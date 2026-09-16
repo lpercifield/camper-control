@@ -5,15 +5,20 @@ Last reviewed 2026-09-09.
 ## Where it actually is
 
 Runs on hardware. Boots, drives the panel, reads touch, and carries a Settings
-overlay whose values survive a power cycle. Flash 49.2%, static RAM 32.6%,
-**~97 KB free heap** since the NimBLE port. Main loop ~23k iterations/sec and
-LVGL ~84 flushes/sec, re-measured on hardware 2026-09-09 - the older "~46k
-loops/sec, ~48 flushes/sec" read the cumulative heartbeat counters as if they
-were rates. No integration holds the loop.
+overlay whose values survive a power cycle. Flash 49.5%, static RAM 32.9%,
+**~94 KB free heap**. Main loop ~23k iterations/sec and LVGL ~84 flushes/sec,
+re-measured on hardware 2026-09-09 - the older "~46k loops/sec, ~48
+flushes/sec" read the cumulative heartbeat counters as if they were rates. No
+integration holds the loop.
 
 The BMS connects on the remembered address and reaches `online`, so the live
-pack display works. **There are no blockers left.** What remains is the
-difference between a working device and one worth living with.
+pack display works. Wireless temperature and humidity works too: a SwitchBot
+W3400010 is read on the Climate page, confirmed against the vendor app on
+2026-09-16, and any BTHome v2 broadcaster is read by the same path.
+
+**There are no blockers left.** What remains is one bug worth fixing - the
+scanner starves other listeners while the BMS is failing to connect - and then
+the difference between a working device and one worth living with.
 
 ## Blockers
 
@@ -22,104 +27,12 @@ and remembers its settings.
 
 ## Design gaps
 
-**1. No temperature sensor has been bought.** Everything else is done and
-proven: `BleScanner` fans advertisements out to listeners, `core/bthome.*`
-decodes BTHome v2, `core/switchbot.*` decodes the SwitchBot W3400010, and
-`integrations/env_sensors.*` publishes temperature, humidity and sensor battery
-into `Domain::Climate` from either. Verified on 2026-09-09 against a synthetic
-BTHome advertisement from an Android phone - `40 01 54 02 C4 09 03 BF 13` under
-service UUID `0xFCD2` came out as 25.0 C, 51% and 84% - and on 2026-09-16
-against a real SwitchBot.
-
-Sensors are discovered rather than configured: every BTHome v2 broadcaster in
-earshot binds a slot in a fixed table of eight, and the Climate page gives each
-one a row - the crew's name and the temperature on top, what the sensor calls
-itself and its battery underneath. Tapping a row renames it, and the name is
-kept in NVS against the sensor's address. There is no compile-time sensor
-constant any more; `CFG_BTHOME_INDOOR_MAC` is gone.
-
-**The SwitchBot decode is confirmed against hardware.** A real W3400010
-advertises manufacturer data `69 09 <6-byte address> 0B 02 08 95 26 00` under
-company `0x0969` and service data `77 00 E4` under UUID `0xFD3D`, which decodes
-to 21.8 C, 38% and 100% battery. Two things the reference documentation does
-not make obvious and the device settles:
-
-- The byte offsets that work are the ones that **count the two company-id
-  bytes**, which is what `NimBLEAdvertisedDevice::getManufacturerData()`
-  returns. The other published convention is off by two.
-- The device **sets the top bit of the battery byte** - `0xE4`, not `0x64` - so
-  masking it is load-bearing rather than defensive.
-
-Readings arrive split across two advertisements: temperature and humidity in
-manufacturer data, battery in service data. `EnvSensors::onAdvertisement`
-merges rather than replaces, or a battery-only frame would blank the
-temperature twice a minute.
-
-`SWITCHBOT_TRACE` in `env_sensors.cpp` dumps raw frames and decoded values.
-It is bring-up scaffolding and should go to 0 once a sensor's readings have
-been checked against the SwitchBot app.
-
-**UNVERIFIED:** the rename itself. Discovery, binding, the NVS lookup on bind
-and the page render are all confirmed on hardware, but nobody has yet put a
-finger on the glass and typed a name. A successful save logs
-`settings: sensor <mac> named '<name>'`.
-
-Names are keyed by address, so a renamed sensor appears to lose its name when
-its address rotates. Real sensors have fixed addresses; a phone under test does
-not, and rotated three times in an hour. The table evicts the least recently
-heard slot, so rotation cannot wedge it shut against a real sensor.
-
-Prefer broadcast sensors over connectable ones: a connectable sensor competes
-for the one connection slot the BMS holds, a broadcasting one costs nothing but
-scan time. That rules out most Inkbird models, which require a connection.
-
-### Shortlist (revised 2026-09-09, nothing bought yet)
-
-- **Outdoor: SwitchBot Indoor/Outdoor Thermo-Hygrometer (W3400010)**, $14.99.
-  Broadcasts unencrypted with no pairing, so it never touches the connection
-  slot: temperature and humidity in manufacturer data (company `0x0969`),
-  battery in service data (UUID `0xFD3D`, device type `'w'`). 2xAAA for about
-  two years, IP65, -20 to 60 C. The AAA cells are the point - they behave far
-  better in cold than a coin cell, and take lithium AAAs if it gets serious.
-  **The catch:** this is the one SwitchBot device that does not follow
-  SwitchBot's own documented BLE format, `SwitchBotAPI-BLE` issue 26 was closed
-  without a resolution, and every decoder in the wild is reverse-engineered.
-  It does **not** speak BTHome, so it needs ~15 lines of its own on top of
-  `bthome.*`, and expect the two published decoders to disagree on byte indices
-  by exactly two depending on whether they count the company ID.
-- **Indoor: Xiaomi LYWSD03MMC with pvvx firmware >= 6.0 in BTHome mode**,
-  ~$5-8. Stock firmware encrypts its beacons; the community firmware reflashes
-  over BLE from a browser - no hardware, no soldering. CR2032, roughly a year.
-  Decodes with `core/bthome.*` as it stands, no new code.
-- **If nothing should need reflashing: Shelly BLU H&T**, ~$20-25. Speaks
-  BTHome v2 natively, so it also needs no new code. CR2032 for ~3 years, IP54,
-  -20 to 60 C - fine indoors, but IP54 and a coin cell is not what to hang
-  outside a van year-round.
-- **RuuviTag Pro** (~$40+) is the answer only if the van actually sees below
-  -20 C. It is the one thing on this list rated to -40 C, IP67.
-
-**Correction to the 2026-09-07 survey.** That survey chose RuuviTag for outdoor
-at $30-40 because it was "rated well below freezing", against a coin cell that
-"dies in February". That is wrong for the standard tag: **RuuviTag on its stock
-battery is rated -20 to +70 C**, the same as the $14.99 SwitchBot. Only
-RuuviTag *Pro* reaches -40 C. The stated reason for paying two to three times
-more did not hold, and the cheaper sensor has the better battery chemistry for
-cold. The survey also listed "SwitchBot Meter (~$15, vendor-documented)" - the
-indoor Meter is documented, but the outdoor W3400010 recommended above is
-specifically the one that is not.
-
-**Still open:** `BleScanner` uses active scanning, which makes the ESP32 send
-scan requests that sensors must answer out of *their* battery. The BMS is found
-from a service UUID carried in the advertisement rather than the scan response,
-so this could probably be passive. Untested, and worth a measurement once there
-is a sensor whose battery life is worth protecting.
-
-**2. `Domain::System` has no page.** The enum and `domainName()` know about it;
+**1. `Domain::System` has no page.** The enum and `domainName()` know about it;
 `kNavDomains` does not. Anything registered there - uptime, heap, link health,
 exactly the diagnostics that would have shortened this week - is silently
 invisible. A trap for the next integration author.
 
-**3. Wi-Fi backhaul is not configurable.** The memory objection is gone: Wi-Fi
+**2. Wi-Fi backhaul is not configurable.** The memory objection is gone: Wi-Fi
 costs ~41 KB and there are now ~97 KB free, so it fits with room to spare, and
 coexistence was never the problem. What remains is the work - an SSID scan, an
 on-screen keyboard, credential storage - and one decision: **what the backhaul
@@ -132,10 +45,10 @@ a placeholder row, but nothing scans, joins or stores a network.
 Note NVS is not encrypted, so a stored Wi-Fi password is readable by anyone who
 can dump the flash. See `decisions/0009`.
 
-**4. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
+**3. The arduino-cli harness is dead weight.** Linux-only, already drifted, and
 looks maintained. Delete it or put it in CI. See `decisions/0006`.
 
-**5. Lighting has a page and no integration.** The plan is settled and the
+**4. Lighting has a page and no integration.** The plan is settled and the
 hardware is not bought: each fixture gets its own BLE LED controller, powered
 from the 12 V run that already feeds it, so an existing run becomes a
 controllable light **without pulling any new control wiring** - which is the
@@ -218,6 +131,29 @@ lights off.
 
 ## Done
 
+- **Wireless temperature and humidity, end to end** (2026-09-16). A real
+  SwitchBot W3400010 reads on the Climate page, confirmed against the
+  SwitchBot app. `core/bthome.*` decodes BTHome v2, `core/switchbot.*` decodes
+  the SwitchBot, and `integrations/env_sensors.*` publishes either into
+  `Domain::Climate`. Sensors are discovered rather than configured: any
+  broadcaster in earshot binds a slot in a fixed table of eight, the Climate
+  page gives each one a row, and tapping a row renames it into NVS.
+
+  The SwitchBot settled two things its documentation could not. The byte
+  offsets that work are the ones **counting the two company-id bytes**, which
+  is what `NimBLEAdvertisedDevice::getManufacturerData()` returns - the other
+  published convention is off by two, and choosing wrong yields a plausible
+  wrong temperature rather than an error. And the device **sets the top bit of
+  the battery byte**, sending `0xE4` rather than `0x64`, so masking it is
+  load-bearing. A real frame is manufacturer data
+  `69 09 <address> 0B 02 08 95 26 00` under company `0x0969` plus service data
+  `77 00 E4` under UUID `0xFD3D`, decoding to 21.8 C, 38% and 100% battery.
+
+  Readings arrive split across two advertisements - temperature and humidity in
+  manufacturer data, battery in service data - so `onAdvertisement` merges
+  rather than replaces; otherwise a battery-only frame blanks the temperature
+  twice a minute. `SWITCHBOT_TRACE` in `env_sensors.cpp` dumps raw frames and
+  decoded values, and is off.
 - **Shared BLE scanner, and a BTHome v2 decoder** (2026-09-09).
   `BleScanner` owns `NimBLEDevice::getScan()` and fans advertisements out to
   registered listeners; `BleSerialClient` is now one listener among them rather
@@ -317,17 +253,18 @@ does exist is on the JBD BMS itself, not on this radio; see
 
 ## Suggested order
 
-1. Buy a sensor and write the integration (1). The scanner and the BTHome
-   decoder are in; this is now a shopping decision followed by one small file.
-2. Add the System page (2), and move the heartbeat and bus scan into it - they
-   are the numbers that diagnosed most of this week, and they are only visible
-   over a serial cable.
-3. Lights (5), once the scanner starvation is fixed and a controller is in
-   hand. The decision is made; what is left is the protocol capture and one
-   integration file.
-4. Wi-Fi backhaul (3). Decide what it talks to before building the plumbing.
-5. Resolve the build-system split (4).
+1. **Fix the scanner starvation.** Not a numbered gap - it is under Smaller
+   things - but it is the only thing actively degrading a feature that works:
+   sensors go stale whenever the BMS struggles to connect. It also gates lights.
+2. Add the System page (1), and move the heartbeat and bus scan into it - they
+   are the numbers that diagnosed most of this project, and they are only
+   visible over a serial cable.
+3. Lights (4), once the starvation is fixed and a controller is in hand. The
+   decision is made; what is left is the protocol capture and one integration
+   file.
+4. Wi-Fi backhaul (2). Decide what it talks to before building the plumbing -
+   and note that ESP-NOW for lighting would ride on the same 41 KB.
+5. Resolve the build-system split (3).
 
-The test environment landed 2026-09-08 and the shared scanner 2026-09-09, so
-what used to be the top two items are gone. 1 and 3 make it useful; the rest
-make it a product.
+Sensors were the top item and are done. What is left is one bug, then the
+things that turn a working device into a product.

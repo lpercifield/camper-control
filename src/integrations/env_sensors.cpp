@@ -69,7 +69,7 @@ EnvSensor* EnvSensors::findOrBind(const char* mac) {
 // core/switchbot.* come from reverse-engineered documentation whose two
 // published versions disagree, so the only way to know they are right on a real
 // device is to look. Set to 0 once a sensor has been confirmed.
-#define SWITCHBOT_TRACE 1
+#define SWITCHBOT_TRACE 0
 
 #if SWITCHBOT_TRACE
 namespace {
