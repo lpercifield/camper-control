@@ -126,12 +126,29 @@ no monitor mode to configure and no vendor id to check. Treat the data
 registers as the only documented surface.
 
 `CFG_TOUCH_MIRROR_X` and `_Y` are both on, matching the ESPHome definition for
-this board, and must stay consistent with the rotation setting above. **Both are
-UNVERIFIED** - no touch has ever been read.
+this board, and must stay consistent with the rotation setting above. Both are
+**confirmed by use** since 2026-09-07: the nav bar, the Settings overlay and the
+sensor rename keyboard all hit what they aim at, which a wrong mirror would
+break immediately.
 
 ## Still unverified
 
-- **Touch orientation and alignment.** Nothing has been touched yet.
+- **The LoRa pins have never been exercised.** `board_indicator_d1.h` defines
+  `EXP_LORA_CS`, `EXP_LORA_RST`, `EXP_LORA_BUSY` and `EXP_LORA_DIO1` on port 0
+  of the PCA9535, and nothing in this firmware touches them. They are carried
+  from a pin map shared across the Indicator family, and **Seeed fits the
+  SX1262 on the D1L and D1Pro, not the D1 this board is documented as** - so
+  the footprint is most likely unpopulated. Settle it with a probe rather than
+  a model number: the SX1262 answers `GetStatus` over the bit-banged SPI
+  (`LCD_SPI_SCK/MOSI/MISO`), and an empty footprint reads back all ones or all
+  zeros.
+
+  If it ever is populated, note the shape of the problem before designing
+  around it: **`BUSY` and `DIO1` are on the I2C expander, not on GPIOs.** The
+  SX1262 wants `BUSY` checked before every SPI command, so each command would
+  cost an I2C round trip first, and `DIO1` - the receive interrupt - cannot
+  interrupt, so reception would have to be polled over I2C. In a cooperative
+  loop that is exactly the shape this project has already been bitten by.
 - **Expander pins 9 and 10** in `board_indicator_d1.h` are carried from
   community pin maps, are not driven by this firmware, and should be confirmed
   against your own board before use.

@@ -82,6 +82,80 @@ mapped, so the integration wants a real device in hand before it is written.
 Budget ~0.2 A per fixture of idle draw, controller plus pixel ICs, with the
 lights off.
 
+### These controllers have no access control at all
+
+Not pairing, not bonding, not a PIN - the SP107E class is open GATT, and so is
+every cheap BLE LED controller. `decisions/0012` weighed voltage, idle draw,
+protocol dialects and the connection ceiling and never considered this, which
+is a gap in that record rather than in the product.
+
+Three consequences, and the second is the one that gets missed. A neighbour
+with the vendor app can change the lights. Worse, **they can deny you control**
+- these peripherals accept one central at a time, so whoever connects first
+holds the slot. And the lights answering at all tells a passer-by the van is
+powered. The blast radius is lights only: the controller is an isolated
+peripheral and cannot reach the BMS, the registry or anything else.
+
+What actually helps, in order:
+
+- **Hold the connection.** While the van is connected the peripheral refuses
+  everyone else. Free, and it suits the design anyway. Two gaps: the slot is
+  open while the van is off or rebooting, and if somebody is already connected
+  at boot then *we* are locked out instead. **UNVERIFIED** that this class
+  accepts only one central - worth checking with the first controller bought.
+- **Keep the fixture's existing wall switch upstream.** The controller is then
+  physically dead when the light is off: no radio, no attack surface and no
+  parasitic draw. It answers the security problem and the 5 Ah/day idle draw
+  with a wire that is already there.
+- Renaming the device is not a defence; a scanner finds it by service UUID.
+
+If "nobody else may trigger the lights" ever becomes a hard requirement rather
+than a preference, **this class of product cannot meet it**, and no firmware on
+the van side changes that. That would supersede `0012` and make lighting depend
+on Wi-Fi landing first.
+
+### ESP-NOW is the stronger alternative, and is not yet decided
+
+Evaluated 2026-09-10, not chosen. An ESP32-based controller such as the
+Gledopto GL-C-017WL-D - DC5-24 V, four channels, 800 pixels, ships with WLED -
+could be driven over **ESP-NOW** rather than BLE. That fixes, in one move, most
+of the objections above: connectionless, so the three-connection ceiling stops
+applying; CCMP/AES-128 with a PMK and LMK, so there is real encryption; about
+17 peers; and millisecond latency instead of a BLE connect.
+
+Three routes, and they are not equivalent:
+
+| | AP needed | Security | State readback |
+|---|---|---|---|
+| Stock WLED, ESP-NOW remote | no | MAC allowlist | **none** |
+| Stock WLED, Wi-Fi JSON | yes | WPA2 | full |
+| Reflashed, custom ESP-NOW | no | CCMP + HMAC | full |
+
+WLED's ESP-NOW support is a *remote* protocol - one-way, button events only -
+so the stock route reintroduces exactly the "confirm, do not assume" violation
+that disqualified the analogue controllers. Only reflashing delivers the whole
+prize, at the cost of owning node firmware.
+
+The radio cost is measured, under Smaller things: Wi-Fi takes 41 KB and about a
+fifth of advertisement reception, but it is paid once and would be paid anyway
+if the backhaul lands. Espressif's own caveat is that MAC addresses are
+spoofable, so anything security-critical wants an application-level HMAC in the
+payload; for van lighting, encryption plus an allowlist is proportionate.
+
+One hardware caution: the GL-C-017WL-D is rated **-20 to 45 C**, against the
+SP107E's 60 C. A parked van in summer sun goes past 45 C, so placement matters.
+
+### LoRa was considered and set aside
+
+An SX1262 second radio (2026-09-10) would escape the BLE connection ceiling
+entirely and reach a trailer or a remote tank. Set aside for three reasons: the
+chip is almost certainly not fitted on this board (see `HARDWARE.md`), the
+pinout puts `BUSY` and `DIO1` behind the I2C expander, and there is no
+ecosystem of LoRa light controllers to buy - SenseCAP's own LoRa sensors are
+LoRaWAN, which wants a gateway and a network server in a van. Point-to-point
+means building both ends. Worth revisiting only for something BLE genuinely
+cannot reach.
+
 ## Smaller things
 
 - **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
@@ -91,6 +165,42 @@ lights off.
   the same thing. Removing the include should let the workaround go with it -
   worth doing before Wi-Fi lands for real, so the dependency is deliberate
   rather than accidental.
+- **Wi-Fi and BLE do coexist on this board, and the bill is mostly heap.**
+  Measured 2026-09-10, because the ESP-NOW lighting idea needs the Wi-Fi radio
+  while the van needs BLE continuously, and the two share one 2.4 GHz radio.
+  With `WiFi.mode(WIFI_STA)` and `esp_now_init()` running alongside the BMS
+  connection and the sensor scan:
+
+  | | Advertisements | Loops / 2 s | Free heap |
+  |---|---|---|---|
+  | BLE only | 4.93/s | ~46,500 | ~95 KB |
+  | Wi-Fi up, silent | 3.29/s | ~43,800 | ~54 KB |
+  | ESP-NOW at 4 Hz | 3.52/s | ~41,600 | ~53 KB |
+
+  Nothing broke. ESP-NOW delivered 195 of 195 packets in each run, the BMS
+  connected and stayed online, no integration held the loop, and the UI kept
+  flushing. **Wi-Fi costs 41,392 bytes** - within a hundred bytes of the ~41 KB
+  this file already predicted.
+
+  The useful detail is which cost comes from what. Advertisement reception
+  falls the moment the radio comes up and transmitting barely adds to it (3.29
+  against 3.52/s, inside the spread), so there is no send-rate to tune - the
+  loss is the price of the radio existing. Transmitting does cost loop rate,
+  about 5% on top, and 4 Hz is far more traffic than light commands would ever
+  generate.
+
+  So the direction is viable. The reservation is heap: 54 KB free against 95 KB
+  is less than half the headroom, and the System page, more sensors and the
+  Wi-Fi backhaul all still want room. Note that the 41 KB is paid once - if the
+  backhaul lands later it is the same stack, so ESP-NOW for lighting is
+  effectively free on top of a decision this project already wants to make.
+
+  The spike itself is on the `wifi-coexistence-spike` branch, not on main -
+  `SPIKE_WIFI` there reproduces both rows.
+
+  **UNVERIFIED:** it never received an ESP-NOW packet or drove a light,
+  and Wi-Fi was in station mode joined to nothing. A real backhaul associated
+  with an access point is a heavier radio load than this measured.
 - **A longer BLE connection interval measured worse, not better.** The BMS link
   runs on NimBLE's default 50 ms interval and is polled twice a second
   (`kRefreshMs` is 500), so the radio wakes roughly 15 times more often than
