@@ -14,7 +14,7 @@
 #include "core/integration.h"
 #include "core/settings.h"
 #include "integrations/bms_jbd.h"
-#include "integrations/bthome_sensor.h"
+#include "integrations/env_sensors.h"
 #include "ui/ui.h"
 
 namespace {
@@ -61,7 +61,7 @@ void setup() {
 
   cc::Hub& hub = cc::Hub::instance();
   hub.add(&cc::bms());
-  hub.add(&cc::btHomeSensors());
+  hub.add(&cc::envSensors());
   // Future accessories land here: relay nodes, tank senders, the heater.
   hub.begin();
 

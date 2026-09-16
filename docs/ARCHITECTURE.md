@@ -268,15 +268,15 @@ libraries do not expose - the same wall as `decisions/0004`.
 
 ## `src/core/` runs on a laptop
 
-`entity.cpp`, `registry.cpp`, `alarms.cpp` and `bthome.cpp` contain no
-hardware. That is not an accident of how they were written - it is a
+`entity.cpp`, `registry.cpp`, `alarms.cpp`, `bthome.cpp` and `switchbot.cpp`
+contain no hardware. That is not an accident of how they were written - it is a
 constraint, and `env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~3 s, 73 cases, no board
+pio test -e native        # ~3 s, 85 cases, no board
 ```
 
-Those four files are the only ones the test environment compiles. Anything
+Those five files are the only ones the test environment compiles. Anything
 they include has to exist on a host compiler, so **a `#include` of a driver, a
 bus or NimBLE inside `src/core/` breaks the tests by construction** - which is
 the point. The rule is the whole reason this layer can be trusted while
@@ -300,11 +300,11 @@ variable-length array of like things, and the entity model deliberately does
 not carry arrays. It is the same exception, not a new one - and the reason
 there is no `Registry::remove()` to worry about when a sensor slot is reused.
 
-`bthome.cpp` is here for the same reason: decoding a BTHome v2 advertisement is
-pure byte manipulation, and a wrong byte offset there does not crash anything -
-it puts a plausible, wrong temperature on the screen, which is the worst
-failure mode available. `BleScanner` hands it the bytes; it never touches a
-radio itself.
+`bthome.cpp` and `switchbot.cpp` are here for the same reason: decoding an
+advertisement is pure byte manipulation, and a wrong byte offset does not crash
+anything - it puts a plausible, wrong temperature on the screen, which is the
+worst failure mode available. `BleScanner` hands them the bytes; neither
+touches a radio itself.
 
 `settings.cpp` is deliberately outside all of this. It needs `Preferences`,
 which is NVS, which is the board.

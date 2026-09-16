@@ -10,7 +10,7 @@
 #include "core/registry.h"
 #include "core/settings.h"
 #include "integrations/bms_jbd.h"
-#include "integrations/bthome_sensor.h"
+#include "integrations/env_sensors.h"
 #include "ui/theme.h"
 
 namespace cc {
@@ -459,17 +459,17 @@ void renameSaveCb(lv_event_t* /*e*/) {
     const char* text = lv_textarea_get_text(g_renameInput);
     // An empty box means "go back to whatever the sensor calls itself" rather
     // than a sensor with no name at all.
-    btHomeSensors().rename(g_renameMac, (text && text[0]) ? text : nullptr);
+    envSensors().rename(g_renameMac, (text && text[0]) ? text : nullptr);
   }
   closeRename();
 }
 
 void showRename(const char* mac) {
   if (!g_rename || mac == nullptr) return;
-  const BtHomeSensors& sensors = btHomeSensors();
-  const BtHomeSensor* found = nullptr;
+  const EnvSensors& sensors = envSensors();
+  const EnvSensor* found = nullptr;
   for (size_t i = 0; i < sensors.count(); i++) {
-    const BtHomeSensor* s = sensors.at(i);
+    const EnvSensor* s = sensors.at(i);
     if (s && strcmp(s->mac, mac) == 0) {
       found = s;
       break;
@@ -578,7 +578,7 @@ void buildClimatePage(lv_obj_t* scr) {
 
 void refreshClimatePage() {
   if (!g_climateList) return;
-  BtHomeSensors& sensors = btHomeSensors();
+  EnvSensors& sensors = envSensors();
   const size_t n = sensors.count();
 
   if (n == 0) {
@@ -597,7 +597,7 @@ void refreshClimatePage() {
     lv_obj_t* row = makeCard(g_climateList, 0, 0, 456, kSensorRowH);
     lv_obj_set_style_margin_bottom(row, 6, 0);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    const BtHomeSensor* slot = sensors.at(idx);
+    const EnvSensor* slot = sensors.at(idx);
     lv_obj_add_event_cb(row, sensorRowCb, LV_EVENT_CLICKED,
                         const_cast<char*>(slot->mac));
 
@@ -612,7 +612,7 @@ void refreshClimatePage() {
   }
 
   for (size_t i = 0; i < n; i++) {
-    const BtHomeSensor* s = sensors.at(i);
+    const EnvSensor* s = sensors.at(i);
     if (!s) continue;
     lv_obj_t* row = lv_obj_get_child(g_climateList, i);
     const bool stale = s->stale();

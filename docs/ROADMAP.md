@@ -24,11 +24,12 @@ and remembers its settings.
 
 **1. No temperature sensor has been bought.** Everything else is done and
 proven: `BleScanner` fans advertisements out to listeners, `core/bthome.*`
-decodes BTHome v2, and `integrations/bthome_sensor.*` publishes temperature,
-humidity and sensor battery into `Domain::Climate`. The whole path was verified
-on 2026-09-09 against a synthetic BTHome advertisement broadcast from an
-Android phone - `40 01 54 02 C4 09 03 BF 13` under service UUID `0xFCD2` came
-out as 25.0 C, 51% and 84% on the Climate page. What is left is a purchase.
+decodes BTHome v2, `core/switchbot.*` decodes the SwitchBot W3400010, and
+`integrations/env_sensors.*` publishes temperature, humidity and sensor battery
+into `Domain::Climate` from either. Verified on 2026-09-09 against a synthetic
+BTHome advertisement from an Android phone - `40 01 54 02 C4 09 03 BF 13` under
+service UUID `0xFCD2` came out as 25.0 C, 51% and 84% - and on 2026-09-16
+against a real SwitchBot.
 
 Sensors are discovered rather than configured: every BTHome v2 broadcaster in
 earshot binds a slot in a fixed table of eight, and the Climate page gives each
@@ -36,6 +37,27 @@ one a row - the crew's name and the temperature on top, what the sensor calls
 itself and its battery underneath. Tapping a row renames it, and the name is
 kept in NVS against the sensor's address. There is no compile-time sensor
 constant any more; `CFG_BTHOME_INDOOR_MAC` is gone.
+
+**The SwitchBot decode is confirmed against hardware.** A real W3400010
+advertises manufacturer data `69 09 <6-byte address> 0B 02 08 95 26 00` under
+company `0x0969` and service data `77 00 E4` under UUID `0xFD3D`, which decodes
+to 21.8 C, 38% and 100% battery. Two things the reference documentation does
+not make obvious and the device settles:
+
+- The byte offsets that work are the ones that **count the two company-id
+  bytes**, which is what `NimBLEAdvertisedDevice::getManufacturerData()`
+  returns. The other published convention is off by two.
+- The device **sets the top bit of the battery byte** - `0xE4`, not `0x64` - so
+  masking it is load-bearing rather than defensive.
+
+Readings arrive split across two advertisements: temperature and humidity in
+manufacturer data, battery in service data. `EnvSensors::onAdvertisement`
+merges rather than replaces, or a battery-only frame would blank the
+temperature twice a minute.
+
+`SWITCHBOT_TRACE` in `env_sensors.cpp` dumps raw frames and decoded values.
+It is bring-up scaffolding and should go to 0 once a sensor's readings have
+been checked against the SwitchBot app.
 
 **UNVERIFIED:** the rename itself. Discovery, binding, the NVS lookup on bind
 and the page render are all confirmed on hardware, but nobody has yet put a
