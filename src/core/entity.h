@@ -53,7 +53,9 @@ class NumericEntity : public Entity {
 
   void set(float v);
   float value() const { return value_; }
-  const char* unit() const { return unit_; }
+  // Virtual so a temperature can answer with the unit it is actually being
+  // drawn in rather than the one it is stored in.
+  virtual const char* unit() const { return unit_; }
   uint8_t decimals() const { return decimals_; }
 
   const char* format(char* buf, size_t len) const override;
@@ -62,6 +64,20 @@ class NumericEntity : public Entity {
   float value_ = 0.0f;
   const char* unit_;
   uint8_t decimals_;
+};
+
+// ---- A temperature ----------------------------------------------------------
+// Always *stored* in Celsius, whatever the screen says. value() is therefore
+// comparable against a threshold no matter which unit the crew picked, and
+// format() is the only place the conversion happens. See core/units.h.
+class TemperatureEntity : public NumericEntity {
+ public:
+  TemperatureEntity(const char* id, const char* name, Domain domain,
+                    uint8_t decimals = 1);
+
+  // The unit on screen, not the unit in the field: "°C" or "°F".
+  const char* unit() const override;
+  const char* format(char* buf, size_t len) const override;
 };
 
 // ---- A read-only true/false -------------------------------------------------

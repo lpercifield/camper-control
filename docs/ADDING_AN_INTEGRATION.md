@@ -82,6 +82,15 @@ reading. No UI code changes.
   should show the truth, not the last thing we wished for.
 - **Entity ids are `domain.thing`** and must be unique - the registry drops
   duplicates with a warning.
+- **Do not touch the filesystem.** Not from `begin()`, not from `loop()`. Any
+  flash access while the RGB panel refreshes panics the chip - see
+  `decisions/0014`. If an integration needs to persist something, it goes
+  through `Settings` like everything else, and sparingly.
+- **A temperature is a `TemperatureEntity`, not a `NumericEntity` with a `"C"`
+  unit.** `set()` it in Celsius and it renders in whatever unit the crew chose
+  on the Settings page; `value()` stays Celsius, so your alarm thresholds keep
+  meaning what you wrote. A hand-rolled `"%.1f C"` hardcodes the unit and will
+  quietly ignore that setting - see `core/units.h`.
 - **Raise alarms by name**, clear them when the condition goes away, and prefix
   them with the integration (`"water.pump_dry"`) so a disconnect can clear the
   whole set with `clearPrefix()`.

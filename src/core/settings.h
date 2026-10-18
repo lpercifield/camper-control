@@ -3,6 +3,8 @@
 #include <Preferences.h>
 
 #include "config.h"
+#include "core/clock.h"
+#include "core/units.h"
 
 namespace cc {
 
@@ -50,6 +52,27 @@ class Settings {
   uint32_t screenTimeoutMs() const { return timeoutMs_; }
   void setScreenTimeoutMs(uint32_t ms);
 
+  // ---- Units ----
+  // There is deliberately no getter here. The live value lives in
+  // core/units.h, which is where everything - including the laptop tests -
+  // reads it; this only persists the choice and restores it at begin(). A
+  // second copy is how two temperatures on one screen end up disagreeing.
+  void setTempUnit(TempUnit u);
+
+  // ---- Clock ----
+  // There is no RTC on this board (docs/HARDWARE.md), so the time comes from a
+  // person and this is what carries it across a reboot. The restored value is
+  // marked `Clock::approximate()` until someone confirms it.
+  //
+  // Once an hour, not more. Every one of these is a flash write with the RGB
+  // panel refreshing, which `decisions/0014` establishes is a hazard rather
+  // than a safe operation - so the rate is the smallest one that still spares
+  // the crew re-entering the time after every power cut. A cut costs up to an
+  // hour of accuracy, which is why the restored value announces itself as
+  // approximate rather than being trusted.
+  static constexpr uint32_t kClockSaveMs = 3600000UL;  // 1 hour
+  void setClock(Epoch e);
+
  private:
   Settings() = default;
   void commitBrightness();
@@ -60,6 +83,16 @@ class Settings {
   char bmsMac_[kMacLen] = {0};
   uint8_t brightness_ = CFG_BACKLIGHT_DEFAULT;
   uint32_t timeoutMs_ = CFG_BACKLIGHT_IDLE_MS;
+
+  void saveClock();
+
+  uint32_t lastClockSaveMs_ = 0;
+  // loop() runs ~22,000 times a second and millis() is a 64-bit division, so
+  // the hourly check is gated on a counter rather than paying for the clock
+  // read every pass. Same reason Hub takes one timestamp per boundary - see
+  // ARCHITECTURE.md, where adding a second integration cost 12% of loop rate
+  // almost entirely in instrumentation.
+  uint16_t tick_ = 0;
 
   // Handover slot for the BMS task.
   volatile bool pendingMac_ = false;

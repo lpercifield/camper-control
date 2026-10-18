@@ -5,7 +5,8 @@
  * Generated from the lv_conf_template.h shipped with LVGL 9.2.2. Only these
  * lines differ from the template's defaults:
  *   - the leading content guard is enabled
- *   - LV_MEM_SIZE 64K to 48K   (the RGB framebuffer already owns most of PSRAM)
+ *   - LV_MEM_SIZE stays at the template's 64K (it was cut to 48K, which
+ *     was too small once the UI grew - see decisions/0013)
  *   - LV_USE_LOG 0 to 1        (level stays LV_LOG_LEVEL_WARN)
  *   - LV_LOG_PRINTF 0 to 1     (without it LV_USE_LOG discards every message)
  *   - Montserrat 16/20/28/48 enabled alongside the default 14
@@ -64,7 +65,14 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*Size of the memory available for `lv_malloc()` in bytes (>= 2kB)*/
-    #define LV_MEM_SIZE (48 * 1024U)          /*[bytes]*/
+    /* Camper Control: back to the template's 64K, from the 48K this project
+     * ran on until 2026-09-17. Every screen is built once at boot and kept,
+     * so the pool holds the whole UI rather than a working set: at 48K, adding
+     * the Climate detail page left 2,556 bytes free and the Power page's SOC
+     * arc then boot-looped the board, because an arc is drawn through a mask
+     * that lv_malloc()s at draw time and nothing checks the result. See
+     * docs/TROUBLESHOOTING.md and docs/decisions/0013. */
+    #define LV_MEM_SIZE (64 * 1024U)          /*[bytes]*/
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/
     #define LV_MEM_POOL_EXPAND_SIZE 0

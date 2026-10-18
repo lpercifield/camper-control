@@ -7,10 +7,13 @@
 // block, give it its own FreeRTOS task and let it publish through entities.
 // -----------------------------------------------------------------------------
 #include <Arduino.h>
+#include <lvgl.h>
 
 #include "board_indicator_d1.h"
 #include "bsp/display.h"
+#include "bsp/storage.h"
 #include "core/alarms.h"
+#include "core/clock.h"
 #include "core/integration.h"
 #include "core/settings.h"
 #include "integrations/bms_jbd.h"
@@ -53,6 +56,13 @@ void setup() {
 
   // Before the display, which reads the stored brightness, and before the BMS,
   // which reads the stored address.
+#if CFG_LOG_TO_FLASH
+  // Before the display, and that is load-bearing rather than tidy: mounting
+  // reads flash, and once the RGB panel is refreshing any flash access can
+  // panic the chip (decisions/0014). This is the one safe window.
+  bsp::storageBegin();
+#endif
+
   cc::Settings::instance().begin();
 
   if (!bsp::displayBegin()) {
@@ -66,10 +76,32 @@ void setup() {
   hub.begin();
 
   cc::ui::begin();
+
+  // The UI is built once and kept, so this number is the whole cost of every
+  // screen in the project and it only moves when a screen is added. It stays
+  // because exhausting this pool does not report itself: LVGL's arc mask
+  // lv_malloc()s at draw time, does not check the result, and the board boot
+  // loops in a stack trace that names no file of ours. See
+  // docs/TROUBLESHOOTING.md.
+  {
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    log_i("lvgl pool: free %u largest %u used %u%% frag %u%%",
+          (unsigned)mon.free_size, (unsigned)mon.free_biggest_size,
+          (unsigned)mon.used_pct, (unsigned)mon.frag_pct);
+  }
   log_i("boot complete, free heap %u", (unsigned)ESP.getFreeHeap());
 }
 
 void loop() {
+  // First, so everything downstream sees one consistent idea of the time.
+  //
+  // Gated on a counter, not run every pass: millis() is a 64-bit division and
+  // this loop turns over ~22,000 times a second. Every 256 iterations is still
+  // ~85 Hz against a clock that moves once a second, and Clock::tick() keeps
+  // the sub-second remainder so a coarse call rate costs no accuracy at all.
+  static uint16_t clockTick = 0;
+  if ((++clockTick & 0xFF) == 0) cc::Clock::instance().tick(millis());
   cc::Settings::instance().loop();  // commits anything an integration handed over
   cc::Hub::instance().loop();
   serviceButton();

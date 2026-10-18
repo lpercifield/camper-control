@@ -2,6 +2,7 @@
 
 #include <string.h>
 
+#include "bsp/storage.h"
 #include "config.h"
 
 namespace cc {
@@ -32,6 +33,18 @@ const EnvSensor* EnvSensors::at(size_t i) const {
   if (i >= bound_) return nullptr;
   return &slots_[i];
 }
+
+const History* EnvSensors::historyAt(size_t i) const {
+  if (i >= bound_) return nullptr;
+  return &history_[i];
+}
+
+const DayExtremes* EnvSensors::extremesAt(size_t i) const {
+  if (i >= bound_) return nullptr;
+  return &extremes_[i];
+}
+
+const char* EnvSensors::logStatus() const { return logStatus_; }
 
 // Called only from onAdvertisement, i.e. only from the BLE host task, so the
 // table has exactly one writer and needs no lock of its own.
@@ -206,9 +219,14 @@ void EnvSensors::onAdvertisement(const NimBLEAdvertisedDevice* device) {
 
 void EnvSensors::loop() {
   // NVS must not be touched from the BLE task, so name loading lands here.
+  // The same flag is how the main loop learns a slot has just been bound,
+  // which is the moment the trend behind it stopped being about that sensor.
   for (size_t i = 0; i < bound_; i++) {
     if (!slots_[i].needsNameLoad) continue;
     slots_[i].needsNameLoad = false;
+    history_[i].clear();
+    extremes_[i].reset(Clock::instance().dayIndex());
+    loggedKey_[i][0] = '\0';
     Settings::instance().sensorName(slots_[i].mac, slots_[i].customName,
                                     sizeof(slots_[i].customName));
     log_i("sensor %s: adv='%s' name='%s'", slots_[i].mac, slots_[i].advName,
@@ -220,6 +238,21 @@ void EnvSensors::loop() {
   // ADDING_AN_INTEGRATION.md.
   if ((++tick_ & 0x0FFF) != 0) return;
 
+  // Sampling for the graph rides the same gate - History::record() decides
+  // whether enough time has passed, so this costs one millis() and a compare
+  // per sensor a few times a second. A sensor that has gone quiet still gets
+  // its samples: a flat line through a gap would be a lie, so what goes in is
+  // the gap itself.
+  const uint32_t now = millis();
+  for (size_t i = 0; i < bound_; i++) {
+    const EnvSensor& s = slots_[i];
+    const bool fresh = !s.stale();
+    history_[i].record(now, fresh && s.haveTemp, s.tempC, fresh && s.haveHum,
+                       s.humPct);
+  }
+
+  serviceLog(now);
+
   size_t live = 0;
   for (size_t i = 0; i < bound_; i++) {
     if (!slots_[i].stale()) live++;
@@ -228,6 +261,223 @@ void EnvSensors::loop() {
     setLink(LinkState::Online, "listening");
   } else {
     setLink(LinkState::Searching, bound_ ? "lost" : "listening");
+  }
+}
+
+// ---- the day log ------------------------------------------------------------
+// Everything below writes flash and therefore runs on the main loop only; see
+// bsp/storage.h and decisions/0004 for why that matters on this board.
+
+void EnvSensors::serviceLog(uint32_t nowMs) {
+  Clock& clk = Clock::instance();
+
+  // The daily high and low need a clock and nothing else. Without one there is
+  // no midnight to reset at, so "today" has no meaning - worth saying on the
+  // Climate page rather than showing a dash that looks like a broken sensor.
+  if (!clk.isSet()) {
+    logStatus_ = "set the clock for daily highs";
+    return;
+  }
+
+  const uint32_t day = clk.dayIndex();
+  const uint16_t minute = (uint16_t)clk.minuteOfDay();
+
+  if (!dayStarted_ || day != logDay_) startDay(day);
+
+  // One sample per sensor per minute, gated on the clock's own minute rather
+  // than on elapsed milliseconds: that keeps rows aligned to the wall clock and
+  // makes a duplicate impossible even if this is called twice within a minute.
+  if (minute == lastLoggedMinute_) {
+#if CFG_LOG_TO_FLASH
+    // Flushing is the part that actually reaches flash, so it is deliberately
+    // rarer than appending: LittleFS buffers the rows until a block fills.
+    if (logOpen_ && (nowMs - lastFlushMs_) >= 300000UL) {
+      lastFlushMs_ = nowMs;
+      bsp::logFlush();
+    }
+#else
+    (void)nowMs;
+#endif
+    return;
+  }
+  lastLoggedMinute_ = minute;
+
+  for (size_t i = 0; i < bound_; i++) observeMinute(i, minute);
+}
+
+// The half of the old writeRow() that costs nothing and cannot crash: fold this
+// minute's reading into today's high and low. Kept separate from the file
+// because the file is off on this board (config.h, CFG_LOG_TO_FLASH) and the
+// high and low are the part the crew actually reads.
+void EnvSensors::observeMinute(size_t slot, uint16_t minute) {
+  const EnvSensor& s = slots_[slot];
+
+  // A stale sensor contributes nothing, rather than its last reading. Same
+  // rule as the graph: an outage is a gap, not a flat line.
+  const bool fresh = !s.stale();
+  const bool haveT = fresh && s.haveTemp;
+  const bool haveH = fresh && s.haveHum;
+
+  if (extremes_[slot].day != logDay_) extremes_[slot].reset(logDay_);
+  extremes_[slot].observe(haveT, s.tempC, haveH, s.humPct);
+
+#if CFG_LOG_TO_FLASH
+  writeRow(slot, minute, haveT, haveH);
+#else
+  (void)minute;
+#endif
+}
+
+void EnvSensors::writeRow(size_t slot, uint16_t minute, bool haveT, bool haveH) {
+  if (!logOpen_) return;
+  const EnvSensor& s = slots_[slot];
+
+  LogRecord r;
+  r.minuteOfDay = minute;
+  if (!sensorKey(s.mac, r.key, sizeof(r.key))) return;
+
+  r.tempCx10 = haveT
+                   ? (int16_t)(s.tempC * 10.0f + (s.tempC >= 0 ? 0.5f : -0.5f))
+                   : History::kNoValue;
+  r.humPct = haveH ? (int16_t)(s.humPct + 0.5f) : History::kNoValue;
+  r.battPct = s.haveBatt ? (int16_t)s.battPct : History::kNoValue;
+
+  char line[kLogLineMax];
+
+  // Announce the sensor the first time it appears in this file, or again if
+  // the slot has since become a different sensor - the keys in the rows mean
+  // nothing without it.
+  if (strcmp(loggedKey_[slot], r.key) != 0) {
+    const size_t n = formatSensorHeader(r.key, s.mac, s.displayName(), line,
+                                        sizeof(line));
+    if (n > 0 && bsp::logAppend(line, n)) {
+      strncpy(loggedKey_[slot], r.key, kSensorKeyLen - 1);
+      loggedKey_[slot][kSensorKeyLen - 1] = '\0';
+    }
+  }
+
+  const size_t n = formatRow(r, line, sizeof(line));
+  if (n > 0) bsp::logAppend(line, n);
+}
+
+void EnvSensors::startDay(uint32_t dayIndex) {
+  dayStarted_ = true;
+  logDay_ = dayIndex;
+  lastLoggedMinute_ = 0xFFFF;
+  for (size_t i = 0; i < kMaxEnvSensors; i++) extremes_[i].reset(dayIndex);
+
+#if !CFG_LOG_TO_FLASH
+  // No file on this board: the flash filesystem cannot be touched while the
+  // panel refreshes. See config.h and decisions/0014.
+  logStatus_ = "daily highs from midnight";
+  return;
+#else
+  openDay(dayIndex);
+#endif
+}
+
+void EnvSensors::openDay(uint32_t dayIndex) {
+  bsp::logClose();
+  logOpen_ = false;
+
+  if (!bsp::storageReady()) {
+    logStatus_ = "no filesystem - not logging";
+    return;
+  }
+
+  if (!bsp::ensureDir(kLogDir)) {
+    logStatus_ = "cannot create /log";
+    if (!logTried_) log_e("log: cannot create %s", kLogDir);
+    logTried_ = true;
+    return;
+  }
+
+  rotate(dayIndex);
+
+  char path[48];
+  dayFilePath(Clock::instance().now(), path, sizeof(path));
+  const bool resuming = bsp::fileExists(path);
+
+  if (!bsp::logOpen(path)) {
+    logStatus_ = "cannot open the day file";
+    return;
+  }
+  logOpen_ = true;
+  logTried_ = true;
+
+  for (size_t i = 0; i < kMaxEnvSensors; i++) loggedKey_[i][0] = '\0';
+
+  if (resuming) {
+    // A reboot mid-day. Replay what is already there so the high and low are
+    // the day's, not this boot's - otherwise every power cycle resets them and
+    // the number means nothing.
+    replayDay(path);
+  } else {
+    char line[kLogLineMax];
+    int n = snprintf(line, sizeof(line), "# camper-control log %d\n",
+                     kLogFormatVersion);
+    if (n > 0) bsp::logAppend(line, (size_t)n);
+    char date[12];
+    Clock::formatDate(Clock::instance().now(), date, sizeof(date));
+    n = snprintf(line, sizeof(line), "# date %s\n", date);
+    if (n > 0) bsp::logAppend(line, (size_t)n);
+  }
+  bsp::logFlush();
+
+  log_i("log: %s %s (%u bytes free)", resuming ? "resumed" : "started", path,
+        (unsigned)bsp::storageFreeBytes());
+  logStatus_ = "logging";
+}
+
+void EnvSensors::replayDay(const char* path) {
+  size_t rows = 0;
+  bsp::readLines(path, kLogLineMax, [&](const char* line) {
+    LogRecord r;
+    if (!parseRow(line, r)) return true;  // headers and corrupt rows: skip
+    rows++;
+    // Match the row back to a slot by key, never by position - see the note in
+    // core/datalog.h. A key we no longer have bound is simply a sensor that has
+    // not been heard yet this boot.
+    for (size_t i = 0; i < bound_; i++) {
+      char key[kSensorKeyLen];
+      if (!sensorKey(slots_[i].mac, key, sizeof(key))) continue;
+      if (strcmp(key, r.key) != 0) continue;
+      extremes_[i].observeRecord(r);
+      strncpy(loggedKey_[i], r.key, kSensorKeyLen - 1);
+      loggedKey_[i][kSensorKeyLen - 1] = '\0';
+      break;
+    }
+    return true;
+  });
+  log_i("log: replayed %u rows from today's file", (unsigned)rows);
+}
+
+void EnvSensors::rotate(uint32_t today) {
+  // Two limits, and the space one is the one that actually fires: eight
+  // sensors fill this partition in under a week.
+  const bool tight = bsp::storageFreeBytes() < CFG_LOG_MIN_FREE_BYTES;
+  uint32_t keep = CFG_LOG_KEEP_DAYS;
+
+  for (int pass = 0; pass < 2; pass++) {
+    // Collect first, delete second: deleting inside listDir() mutates the
+    // directory being walked.
+    char doomed[8][20];
+    size_t n = 0;
+    bsp::listDir(kLogDir, [&](const char* name) {
+      if (n >= 8) return;
+      if (!shouldRotate(name, today, keep)) return;
+      strncpy(doomed[n], name, sizeof(doomed[0]) - 1);
+      doomed[n][sizeof(doomed[0]) - 1] = '\0';
+      n++;
+    });
+    for (size_t i = 0; i < n; i++) {
+      char path[48];
+      snprintf(path, sizeof(path), "%s/%s", kLogDir, doomed[i]);
+      if (bsp::removeFile(path)) log_i("log: rotated out %s", path);
+    }
+    // Only take a second, harsher pass if space is what is short.
+    if (!tight || bsp::storageFreeBytes() >= CFG_LOG_MIN_FREE_BYTES) break;
+    keep = 2;
   }
 }
 

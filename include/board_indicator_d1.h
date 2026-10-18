@@ -74,7 +74,10 @@
 #define EXP_LCD_RST    5
 #define EXP_TOUCH_INT  6  // input - leave configured as input
 #define EXP_TOUCH_RST  7
-#define EXP_SD_CS      8
+// Probed 2026-09-17 and it leads nowhere: the SD slot is wired to the RP2040,
+// and GPIO 47 (LCD_SPI_MISO) floats, so there is no card to select. Kept only
+// because the expander pin exists. See docs/HARDWARE.md.
+#define EXP_SD_CS      8  // NOT usable - the ESP32-S3 has no path to the card
 #define EXP_BUZZER_EN  9  // UNVERIFIED - not driven by this firmware
 #define EXP_GROVE_PWR  10 // UNVERIFIED - not driven by this firmware
 

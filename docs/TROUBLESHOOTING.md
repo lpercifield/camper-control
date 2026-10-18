@@ -9,10 +9,13 @@ Every entry here happened; none are hypothetical.
 | `Network.h: No such file or directory` | [Build](#build) |
 | `Unable to verify flash chip connection` | [Flashing](#flashing) |
 | Screen black, backlight pulsing on and off | [Boot loop](#boot-loop) |
+| Boot loop after adding a screen or widget | [Boot loop](#boot-loop) |
+| Boot loop after reading or writing a file | [Boot loop](#boot-loop) |
 | Screen black, backlight steady, no crash in log | [Frozen loop](#frozen-loop) |
 | Serial shows nothing at all | [Serial](#serial) |
 | Serial shows binary garbage | [Serial](#serial) |
 | A literal `f` where a number should be | [UI](#ui) |
+| A temperature reads right on one page and wrong on another | [UI](#ui) |
 | A label drifts out of position as its value grows | [UI](#ui) |
 | Cell bars blink on and off | [Data](#data) |
 | Temperature readings stale while BMS reconnects | [Data](#data) |
@@ -93,6 +96,64 @@ Fix: disable bounce buffers - `decisions/0004`.
 Any panic naming *cache* plus an ISR is this class of bug. The general question
 is "what flash access raced with what interrupt".
 
+**The same panic, but under `esp_flash_read` and the RGB panel's VSYNC
+handler**, is the one that bites anything touching a file:
+
+```
+0x421198bb: gdma_hal_append at hal/gdma_hal_top.c:29
+0x40379bb0: lcd_rgb_panel_try_restart_transmission
+ (inlined by) rgb_lcd_default_isr_handler
+0x4037e1a9: _xt_lowint1              <- interrupted a flash read
+0x40375dca: esp_flash_read
+0x4209ef72: littlefs_esp_part_read
+```
+
+**The filesystem cannot be touched while the display is refreshing.** The panel
+interrupt is IRAM-safe but calls a GDMA function that is not, so it runs with
+the cache off. There is no safe window and no amount of writing less often
+fixes it. `CFG_LOG_TO_FLASH` is 0 for this reason; mounting before
+`displayBegin()` is the only safe flash access. Full decode and the sdkconfig
+lines in `decisions/0014` and `HARDWARE.md`.
+
+Read the two panics together: *bounce buffer* plus NVS is `decisions/0004`,
+*gdma_hal_append* plus a file is `decisions/0014`, and both are "the panel's
+DMA interrupt ran while flash was busy".
+
+**`StoreProhibited` with `EXCVADDR 0x00000000`, in a backtrace naming only
+LVGL** - and in particular `circ_calc_aa4` / `lv_draw_sw_mask_radius_init` under
+`lv_arc_draw`, which is the Power page's SOC arc:
+
+```
+Guru Meditation Error: Core  1 panic'ed (StoreProhibited).
+EXCVADDR: 0x00000000
+0x42014b2c: circ_calc_aa4 at lv_draw_sw_mask.c:1123
+ (inlined by) lv_draw_sw_mask_radius_init at lv_draw_sw_mask.c:352
+0x4202adf1: lv_draw_sw_arc at lv_draw_sw_arc.c:108
+```
+
+**The LVGL memory pool is full.** It is not an arc bug, and it is very probably
+not a bug in whatever you just added either. LVGL draws an arc through an
+anti-aliasing mask it `lv_malloc`s at draw time and never checks, so an
+exhausted pool surfaces as a null write in a vendored file, on a screen you did
+not touch, one boot after the change that actually spent the memory.
+
+Confirm it rather than inferring it. `setup()` logs the pool after
+`ui::begin()`:
+
+```
+lvgl pool: free 18940 largest 18884 used 69% frag 1%
+```
+
+Healthy is what you see above. If `free` is a couple of kilobytes and `used` is
+in the nineties, that is the fault. Sprinkle `lv_mem_monitor()` between the
+`build*()` calls in `ui::begin()` to find which screen spends it - that is how
+the 2026-09-17 case was pinned to 5,896 bytes for one new page.
+
+Every screen in this project is built once and kept, so the pool holds the
+entire UI and its budget grows with each screen added. `LV_MEM_SIZE` in
+`include/lv_conf.h`; see `decisions/0013` before raising it, because it is
+static internal RAM and that is the resource Wi-Fi is waiting on.
+
 ## Frozen loop
 
 **Backlight steady, screen black or stale, no panic, log goes quiet.** The main
@@ -155,6 +216,24 @@ afterwards. Aligning a label while its text still reads `--` pins the position
 for a two-character string, so `100%` later hangs off to the right. Re-align
 after setting the text, or give the label a fixed box and centre the text
 inside it.
+
+**A temperature reads right on one page and wrong on another, or ignores the
+Settings switch** - something built the string itself instead of going through
+`Entity::format()` or `formatTemp()`. A raw `snprintf("%.1f C", ...)` is
+correct-looking code that hardcodes the unit, and it will keep saying Celsius
+after the crew taps `°F`.
+
+The related and nastier version: something stored Fahrenheit. **Readings are
+stored in Celsius everywhere** and converted only on the way to the screen -
+`TemperatureEntity::value()` and `EnvSensor::tempC` are always Celsius. If a
+value is converted on the way *in*, every alarm threshold comparing against it
+silently moves by 1.8x and nothing on screen looks wrong. See `core/units.h`
+and the Units section of `ARCHITECTURE.md`.
+
+**A degree sign renders as a box, or a non-ASCII character vanishes** - the
+built-in Montserrat fonts are generated with `-r 0x20-0x7F,0xB0,0x2022`. ASCII,
+U+00B0 and U+2022 are the entire character set. Anything else needs a font
+rebuilt with a wider range.
 
 ## Touch
 

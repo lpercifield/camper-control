@@ -131,6 +131,82 @@ this board, and must stay consistent with the rotation setting above. Both are
 sensor rename keyboard all hit what they aim at, which a wrong mirror would
 break immediately.
 
+## Flash and the RGB panel cannot be used at the same time
+
+Settled 2026-09-17, by a boot loop and a decoded backtrace. **Any flash
+operation while the panel is refreshing can panic the chip**, and a sustained
+one - a filesystem mount, a directory read - panics it reliably.
+
+A flash access disables the cache. The panel's VSYNC interrupt fires at ~60 Hz
+inside that window, and although the handler itself is in IRAM it calls
+`gdma_hal_append`, which is not:
+
+```
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y            handler in IRAM      0x4037....
+CONFIG_LCD_RGB_RESTART_IN_VSYNC=y         handler restarts DMA every frame
+# CONFIG_GDMA_CTRL_FUNC_IN_IRAM is not set    but this is in flash 0x4211....
+```
+
+Those are the Arduino prebuilt libraries' own settings, in
+`framework-arduinoespressif32-libs/esp32s3/sdkconfig`, and not ours to change -
+the same wall as `decisions/0004` and the PSRAM Wi-Fi option.
+
+Consequences, in order of how much they should worry you:
+
+- **LittleFS/SPIFFS is off the table** while the display runs.
+  `CFG_LOG_TO_FLASH` is 0. See `decisions/0014`.
+- **Mounting before `displayBegin()` is safe**, and is the only safe window -
+  the panel is not refreshing yet. Anything the firmware needs off flash it
+  must read at boot, before the display comes up.
+- **NVS writes are the same hazard, just shorter.** `Preferences` takes one or
+  two milliseconds and usually slips between VSYNCs; this project has been
+  doing it since the start without a panic. That is luck with good odds, not
+  safety. Do not add more of them.
+
+## The SD slot is not reachable from the ESP32-S3
+
+Settled 2026-09-17, by probe. **The microSD slot belongs to the RP2040.** The
+ESP32-S3 cannot read or write it, and no firmware on the ESP32-S3 side changes
+that.
+
+`board_indicator_d1.h` defines `EXP_SD_CS` on expander pin 8, which reads like
+an invitation to drive the card over the panel's SPI bus. It is not one - the
+constant is carried from the same community pin map as `EXP_BUZZER_EN` and
+`EXP_GROVE_PWR`, both already flagged below as unconfirmed.
+
+The probe drove `EXP_SD_CS` from the expander and ran the SPI-mode init sequence
+on `LCD_SPI_SCK/MISO/MOSI` (41/47/48):
+
+```
+SD probe: CMD0 -> 0x00, CMD8 -> 0x00
+SD probe: idle bytes cs_high=00 00 00 00 cs_low=00 00 00 00
+SD probe: gpio47 with pullup=1 pulldown=0 (floating - nothing drives this pin)
+```
+
+Three things in that, and the third is conclusive:
+
+- A card in SPI mode answers `CMD0` with `R1 = 0x01`. `0x00` is not an answer -
+  it is a low line read as a byte.
+- An SD bus with a card present but unselected idles **`0xFF`**, because DO is
+  pulled up. Reading `0x00` with CS both high and low means there is no DO.
+- **GPIO 47 floats.** Pull-up reads 1, pull-down reads 0, so nothing on the
+  board drives that pin. `LCD_SPI_MISO` is a name, not a connection - note that
+  `IndicatorPanelBus` never passes it to `Arduino_SWSPI` either.
+
+The pin budget says the same thing independently. The RGB panel takes 0-18 and
+21, PSRAM 33-37, flash 26-32, I2C 39/40, UART0 43/44, the RP2040 link 19/20,
+backlight 45, button 38, panel SPI 41/47/48. That leaves 42 and 46 - two pins,
+where SD needs at least CLK, CMD and DAT0 plus a select.
+
+**Reaching the card means talking to the RP2040** over `RP2040_UART_TX/RX`
+(19/20, PacketSerial + COBS), and its stock firmware exposes no file API - so it
+means custom RP2040 firmware and a protocol on both sides. Nothing in this
+project talks to the RP2040 at all yet.
+
+For on-device logging without that work, the flash already carries an unused
+**1.5 MB `spiffs` data partition** (`default_8MB.csv`, `0x670000`), plus a
+3.3 MB `app1` OTA slot that nothing uses.
+
 ## Still unverified
 
 - **The LoRa pins have never been exercised.** `board_indicator_d1.h` defines
@@ -151,10 +227,13 @@ break immediately.
   loop that is exactly the shape this project has already been bitten by.
 - **Expander pins 9 and 10** in `board_indicator_d1.h` are carried from
   community pin maps, are not driven by this firmware, and should be confirmed
-  against your own board before use.
+  against your own board before use. Pin 8 (`EXP_SD_CS`) came from the same
+  place and has now been probed - see above; treat 9 and 10 with the same
+  suspicion.
 - **Colour order.** If the image is ever blue-tinted, the panel wants big-endian
   pixels: pass `useBigEndian = true` to `Arduino_ESP32RGBPanel`. Colours look
   correct today, so this is settled by observation rather than by datasheet.
 - **The RP2040 is idle.** It owns the buzzer, the SD slot and the Grove ports,
   and is reachable over UART on GPIO 19/20 (PacketSerial + COBS). Nothing talks
-  to it yet, which is why there is no audible alarm.
+  to it yet, which is why there is no audible alarm. Its ownership of the SD
+  slot is no longer unverified - see above.

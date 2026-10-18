@@ -81,7 +81,9 @@ class JbdBms : public Integration {
   NumericEntity current_{"battery.current", "Pack current", Domain::Power, "A", 1};
   NumericEntity power_{"battery.power", "Pack power", Domain::Power, "W", 0};
   NumericEntity remaining_{"battery.remaining", "Remaining", Domain::Power, "Ah", 1};
-  NumericEntity temperature_{"battery.temperature", "Battery temp", Domain::Power, "C", 1};
+  // A TemperatureEntity, not a NumericEntity: the pack reports Celsius and the
+  // crew may be reading Fahrenheit. See core/units.h.
+  TemperatureEntity temperature_{"battery.temperature", "Battery temp", Domain::Power, 1};
   NumericEntity cellMin_{"battery.cell_min", "Lowest cell", Domain::Power, "V", 3};
   NumericEntity cellMax_{"battery.cell_max", "Highest cell", Domain::Power, "V", 3};
   NumericEntity cellDelta_{"battery.cell_delta", "Cell spread", Domain::Power, "V", 3};

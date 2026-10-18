@@ -1,5 +1,7 @@
 #include "core/entity.h"
 
+#include "core/units.h"
+
 namespace cc {
 
 const char* domainName(Domain d) {
@@ -39,6 +41,23 @@ const char* NumericEntity::format(char* buf, size_t len) const {
     snprintf(buf, len, "%.*f", decimals_, value_);
   }
   return buf;
+}
+
+// ---- TemperatureEntity ------------------------------------------------------
+
+TemperatureEntity::TemperatureEntity(const char* id, const char* name,
+                                     Domain domain, uint8_t decimals)
+    : NumericEntity(id, name, domain, "C", decimals) {}
+
+const char* TemperatureEntity::unit() const { return tempUnitSuffix(); }
+
+const char* TemperatureEntity::format(char* buf, size_t len) const {
+  if (!buf || len == 0) return "";
+  if (!everUpdated()) {
+    snprintf(buf, len, "--");
+    return buf;
+  }
+  return formatTemp(value(), buf, len, decimals());
 }
 
 // ---- BinaryEntity -----------------------------------------------------------
