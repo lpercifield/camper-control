@@ -6,7 +6,7 @@ this file is the stuff an agent needs loaded before touching anything.
 ## Commands
 
 ```
-pio test -e native                                       # host tests, ~2 s
+pio test -e native                                       # 202 cases, ~5 s
 pio run                                                  # compile
 pio run -t upload --upload-port /dev/cu.usbserial-1110   # flash
 $(ls /opt/homebrew/Cellar/platformio/*/libexec/bin/python | head -1) \
@@ -79,10 +79,17 @@ theory, and never state a cause you have not observed.**
 
 1. **Is the loop running?** `displayLoop` logs `hb: loops=... flushes=...`.
    Both are **cumulative counters printed every 2 s**, so read the delta
-   between two lines, not the number itself. Measured on hardware 2026-09-09:
-   healthy is **~46,800 loops and 168 flushes per heartbeat**, i.e. ~23k
-   loops/sec and ~84 flushes/sec. If `loops` is stuck, an integration is
+   between two lines, not the number itself. Measured on hardware 2026-10-18:
+   healthy is **~41,900 loops and 168 flushes per heartbeat**, i.e. ~21k
+   loops/sec and 84 flushes/sec. If `loops` is stuck, an integration is
    blocking and nothing else you observe means anything yet.
+
+   **That baseline dropped on purpose and is not a regression.** It was
+   ~46,800 loops on 2026-09-09; the phone broadcast costs about 9% of the
+   loop's spare headroom (`decisions/0016`), and the flush rate did not move,
+   which is the number that says the UI is healthy. Comparing against the old
+   figure is how you spend an afternoon chasing nothing. Setting
+   `CFG_BLE_BROADCAST` to 0 returns it to ~45,700.
 2. **Is the panel alive?** `g_gfx->fillScreen(RED); delay(1000);` right after
    `g_gfx->begin()` separates a dead panel from a silent LVGL.
 3. Only then reason about the diff.

@@ -401,19 +401,22 @@ it, because the crew could not have seen what was under their finger.
 
 ## Memory
 
-The tight resource is **internal RAM**, not flash. Measured 2026-09-17: 1.66 MB
-of the 3.3 MB app partition, **127 KB static RAM (38.9%)**, and **~75 KB of
-free heap after boot**. It was 107 KB and ~97 KB on 2026-09-07; the difference
-is `LV_MEM_SIZE` going from 48 KB to 64 KB (`decisions/0013`) plus 2.8 KB of
-sensor history.
+The tight resource is **internal RAM**, not flash. Measured 2026-10-18:
+1.69 MB of the 3.3 MB app partition (50.5%), **129.5 KB static RAM (39.5%)**,
+and **~74 KB of free heap after boot**. It was 107 KB static and ~97 KB free on
+2026-09-07; most of the difference is `LV_MEM_SIZE` going from 48 KB to 64 KB
+(`decisions/0013`) plus 2.8 KB of sensor history, and 2.6 KB of it is the
+phone broadcast (`decisions/0016`).
 
 Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 64 KB
 pool (`LV_MEM_SIZE`), the NimBLE host, and the BMS task's 8 KB stack - of which
 about 2 KB is actually used, so it is oversized on purpose while there is room.
 
-With every screen built, the LVGL pool sits at **18,940 bytes free, 69% used,
-1% fragmented** (hardware, 2026-09-17), and drops to ~16.4 KB with the sensor
-detail page open. Roughly two more screens of slack.
+With every screen built, the LVGL pool sits at **16,388 bytes free, 73% used,
+1% fragmented** (hardware, 2026-10-18, and unchanged by the phone broadcast,
+which creates no LVGL objects). It read 18,940 free and 69% used before the
+clock setter was added; `decisions/0015` is why that screen is built on demand
+rather than kept, and why the figure did not go further.
 
 ### Wi-Fi does not currently fit
 
@@ -456,7 +459,7 @@ accident of how they were written - it is a constraint, and
 `env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~9 s, 193 cases, no board
+pio test -e native        # ~5 s, 202 cases, no board
 ```
 
 Those nine files are the only ones the test environment compiles. Anything

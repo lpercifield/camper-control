@@ -78,7 +78,7 @@ association at once, which is how it already talks to a watch while CarPlay
 runs. And the radio is already up and paid for - **peripheral role is compiled
 in today**, since NimBLE's `nimconfig.h` defaults
 `CONFIG_BT_NIMBLE_ROLE_PERIPHERAL` to 1, so a GATT server adds no new stack
-where Wi-Fi adds a measured 41 KB against ~75 KB free.
+where Wi-Fi adds a measured 41 KB against ~74 KB free.
 
 **Split read from write. They have almost nothing in common.**
 
@@ -234,7 +234,7 @@ thing to do, and it needs a phone rather than a laptop.
 Assistant is still the obvious shape for a van that sits on a driveway, and gap
 6 still wants a radio. `core/settings.*` and the Settings overlay exist, and the
 Settings page carries a placeholder row, but nothing scans, joins or stores a
-network. Wi-Fi costs ~41 KB against ~75 KB free, so it fits with ~35 KB to
+network. Wi-Fi costs ~41 KB against ~74 KB free, so it fits with ~33 KB to
 spare and coexistence was never the problem - but the credential screens are two
 more screens on a pool with roughly two screens of slack, and **what the
 backhaul talks to** is still undecided. Note NVS is not encrypted, so a stored
@@ -711,9 +711,12 @@ that setting, which is gap 7's problem, not a UI problem.
   from the main loop. State the constraint where `raise()` is declared.
 - **The BMS task's stack is oversized.** 8 KB allocated, and `taskLoop()`
   reports 6,044 bytes of headroom - about 2 KB actually used. It could drop to
-  4 KB, but with ~97 KB free since the NimBLE port there is no reason to take
-  that risk yet. The reporting stays so the decision can be evidence-based
-  whenever RAM matters again.
+  4 KB, but with ~74 KB free there is still no reason to take that risk yet.
+  (That figure read ~97 KB when this was written, right after the NimBLE port;
+  `LV_MEM_SIZE`, the sensor history and the phone broadcast have spent the
+  difference. The conclusion is unchanged, the headroom is smaller.) The
+  reporting stays so the decision can be evidence-based whenever RAM matters
+  again.
 
 ## Done
 
