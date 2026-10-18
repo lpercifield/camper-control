@@ -16,6 +16,7 @@
 #include "core/clock.h"
 #include "core/integration.h"
 #include "core/settings.h"
+#include "integrations/ble_broadcast.h"
 #include "integrations/bms_jbd.h"
 #include "integrations/env_sensors.h"
 #include "ui/ui.h"
@@ -72,6 +73,13 @@ void setup() {
   cc::Hub& hub = cc::Hub::instance();
   hub.add(&cc::bms());
   hub.add(&cc::envSensors());
+#if CFG_BLE_BROADCAST
+  // Last on purpose, and the order is load-bearing: this one reads the
+  // registry rather than filling it, and it needs NimBLE already up - which
+  // the BMS integration's begin() does. It stands NimBLE up itself if the BMS
+  // is ever disabled, but this way it never has to.
+  hub.add(&cc::bleBroadcast());
+#endif
   // Future accessories land here: relay nodes, tank senders, the heater.
   hub.begin();
 

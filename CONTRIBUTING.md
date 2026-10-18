@@ -75,6 +75,9 @@ The single most useful rule here. Ask, in order:
    USB identifiers, baud rates, panel quirks.
 2. **Is it a rule that code must obey?** -> `ARCHITECTURE.md` if it applies to
    the whole system, `ADDING_AN_INTEGRATION.md` if it only binds integrations.
+   **If it binds both the firmware and the phone app, it is `ICD.md`** - that
+   file is normative, and a wire-format fact recorded anywhere else will drift
+   out of step with one end or the other.
 3. **Did something break, and would the next person be stuck too?** ->
    `TROUBLESHOOTING.md`, as a symptom, not as a cause. People search for what
    they can see, not for what is actually wrong.
@@ -131,6 +134,10 @@ A change is not finished until:
 - Any failure it fixed is in `TROUBLESHOOTING.md` under the symptom you saw.
 - Any patch to vendored code is numbered in `PORTING_NOTES.md`.
 - Any contract it changed is in `ARCHITECTURE.md`.
+- Any change to what goes over the air between the controller and the phone is
+  in `ICD.md`, with `python3 tools/check_icd.py` passing. The pre-commit hook
+  runs that check, and **`SKIP_DOC_CHECK=1` does not skip it** - a protocol
+  that has drifted is a broken van rather than a missing paragraph.
 - `ROADMAP.md` reflects what is now true.
 
 The test: could someone who has never seen this project reproduce your reasoning

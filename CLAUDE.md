@@ -11,7 +11,28 @@ pio run                                                  # compile
 pio run -t upload --upload-port /dev/cu.usbserial-1110   # flash
 $(ls /opt/homebrew/Cellar/platformio/*/libexec/bin/python | head -1) \
     tools/readlog.py /dev/cu.usbserial-1110 --seconds 15 # read the log
+./android/build.sh                                       # the phone app's APK
+ANDROID_SERIAL=1C241FDEE006MY ./android/build.sh install # onto the dev phone
+python3 tools/check_icd.py                               # firmware/app contract
 ```
+
+**Name the phone too.** The development phone is a **Pixel 6 Pro, serial
+`1C241FDEE006MY`** (Android 17, SDK 37) and is the one to install on. The
+owner's main phone may also be attached and is loaded by hand, so `adb` with
+two devices present fails rather than guessing. `adb` reads `ANDROID_SERIAL`,
+so exporting it once covers every call in a session.
+
+**`docs/ICD.md` is the contract between the firmware and the phone app**, and
+it is normative - a wire-format change recorded anywhere else drifts. The two
+halves it compiles are `include/icd.h` and `Icd.java`;
+`tools/check_icd.py` holds them to each other and the pre-commit hook runs it,
+including when `SKIP_DOC_CHECK=1` is set. The advertised BLE name is protocol
+(it carries the version), which is why it is not in `config.h`.
+
+The Android monitor app in `android/` builds straight from the SDK tools with
+no Gradle - it has no dependencies and no resource files. `android/README.md`
+says why, and carries the two traps that cost time there (this repository's
+path has spaces in it, which breaks `javac $(find ...)`).
 
 **Always name the upload port.** The board exposes two: the CH340
 (`1a86:7523`, `/dev/cu.usbserial-*`) is the ESP32-S3; the Seeed device
@@ -32,6 +53,21 @@ Auto-detect picks whichever it finds first.
 - **`env:native` has no `main()`**, so it cannot be built as a plain env - only
   run as a test. `default_envs = indicator_d1` is what keeps bare `pio run`
   from trying and failing. Ask for the tests by name: `pio test -e native`.
+- **Do not read or write a file while the display is running.** LittleFS,
+  SPIFFS, anything on the flash filesystem: the RGB panel's VSYNC interrupt
+  calls a flash-resident GDMA function during the cache-disabled window of any
+  flash access, and the board boot loops. `CFG_LOG_TO_FLASH` is 0 for this
+  reason. Mounting before `displayBegin()` is the only safe window. NVS writes
+  are the same hazard with a shorter window - do not add more.
+  `docs/decisions/0014`.
+- **The microSD slot is wired to the RP2040, not the ESP32-S3.** Probed; GPIO 47
+  floats. `EXP_SD_CS` in the pin map leads nowhere. `docs/HARDWARE.md`.
+- **A boot loop right after adding a screen is the LVGL pool, not your screen.**
+  It surfaces as `StoreProhibited` at `EXCVADDR 0x00000000` inside
+  `lv_draw_sw_mask_radius_init`, drawing a widget you did not touch - LVGL
+  `lv_malloc`s an arc's mask at draw time and never checks it. `setup()` logs
+  `lvgl pool: free ... used ...%`; read that before theorising. Every screen is
+  built once and kept, so the pool holds the whole UI. `docs/decisions/0013`.
 - **Never flip an LVGL config flag to fix a string.** `LV_USE_FLOAT` also
   retypes `lv_value_precise_t` across LVGL's geometry headers. Format floats
   with `Entity::format()` or `snprintf`. See `docs/decisions/0005`.

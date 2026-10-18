@@ -48,6 +48,121 @@ property of the data rather than something each screen has to track.
 - `SwitchEntity` separates `command()` from `confirm()`. State changes when the
   hardware agrees, not when we ask. A relay node that has gone offline shows the
   truth.
+- `TemperatureEntity` is a `NumericEntity` that renders in the crew's chosen
+  unit. See below - the rule it exists to enforce is worth stating on its own.
+
+### Clock - `src/core/clock.h`
+
+There is no RTC, no Wi-Fi and no NTP on this board, so **the only source of
+time is a person typing it into the Settings page.** Three consequences that
+everything above this depends on:
+
+- It counts from `millis()`, so it drifts with the crystal - seconds a day,
+  irrelevant to a daily bucket. `tick()` moves *whole seconds* out of the
+  millisecond counter and keeps the remainder, so an awkward tick rate cannot
+  make it run slow, and it is unsigned so the 49-day `millis()` wrap is a
+  non-event.
+- It is **local time with no timezone.** `dayIndex()` is a local day and
+  midnight is a real boundary, which is what makes "today's high" mean what it
+  says.
+- After a power cut it is wrong by however long the power was off. `Settings`
+  restores the last value it saved and the clock reports itself
+  `approximate()` until a person confirms it. The Settings row says so in
+  amber. A wrong timestamp that admits it is a guess is useful; one that does
+  not is worse than none.
+
+### Units - `src/core/units.h`
+
+**Every temperature in this project is stored in Celsius and converted exactly
+once, on its way to the screen.** Sensors report Celsius, the BMS reports
+Celsius, and alarm thresholds are written in Celsius; the unit the crew reads is
+a property of the display, not of the reading.
+
+So `TemperatureEntity::value()` keeps returning Celsius no matter what the
+Climate page says, and only `format()` and `unit()` change. Anything that
+compares a temperature against a limit therefore keeps working when someone taps
+`°F`, which is the failure this shape is here to prevent - a threshold that
+silently moves by 1.8x is not a bug anyone finds by looking at the screen.
+
+The live value is a single global here rather than a member of `Settings`, for
+two reasons: `src/core/` has to compile on a laptop and `Settings` needs NVS,
+and a second copy is how two temperatures on one screen end up disagreeing.
+`Settings::setTempUnit()` writes both - the live value and the flash - and
+`Settings::begin()` restores it. **There is deliberately no getter on
+`Settings`.**
+
+`tempUnitSuffix()` returns `°C` / `°F` as UTF-8. The built-in Montserrat fonts
+are generated with `-r 0x20-0x7F,0xB0,0x2022`, so U+00B0 is one of exactly three
+glyphs they carry outside ASCII; `LV_TXT_ENC` is UTF-8. Do not assume any other
+non-ASCII character will render.
+
+### History - `src/core/history.h`
+
+A fixed ring of recent readings per sensor, behind the Climate page's graph.
+`CFG_HISTORY_SAMPLES` x `CFG_HISTORY_INTERVAL_MS` in `config.h` sets the window;
+144 samples ten minutes apart is 24 hours, which is what the graph shows. The
+ring runs on **elapsed time, not the wall clock**, so it fills and scrolls
+whether or not anyone has set the clock.
+
+Two properties are load-bearing:
+
+- **A sample the sensor did not send is a gap, not a repeat.** `record()` takes
+  `haveTemp` / `haveHum` and stores `History::kNoValue`, and the range helpers
+  skip them. Drawing a flat line through an outage is a plausible lie, which is
+  the failure mode this project cares most about (`decisions/0011`).
+- **Samples are `int16_t`** - tenths of a degree, whole percent - because
+  internal RAM is the tight resource and a graph a few hundred pixels wide
+  cannot show more. 90 samples x 4 bytes x 8 slots is 2.8 KB.
+
+`EnvSensors` owns the rings and they are **written and read only on the main
+loop**, deliberately outside `EnvSensor` itself: that struct is written by the
+BLE task and a rebind wipes it wholesale. `loop()` clears the ring for a slot
+when it sees `needsNameLoad`, which is the flag that already means "this slot
+just became a different sensor".
+
+### The daily high and low - `src/core/datalog.h`
+
+`DayExtremes` per sensor, fed once a minute from the live readings and reset at
+local midnight. **Not** computed from the graph's ring: that samples every ten
+minutes and would walk straight past the hour the sun was on the roof.
+
+It needs the clock, and nothing else - no clock means no midnight, so the
+Climate page says `set the clock for daily highs` rather than showing a dash
+that looks like a broken sensor.
+
+**It does not survive a reboot**, and the day file that would have fixed that
+is disabled. `datalog.*` still carries the whole file format - rows keyed by
+the last six hex digits of the MAC rather than by slot index, because slots are
+positional and a sensor takes whichever is free - along with rotation and
+replay, all under test. It is waiting on a storage medium. See
+`decisions/0014`, and the next section for why.
+
+### Storage - `src/bsp/storage.h`, and why the log is off
+
+**The ESP32-S3 on this board cannot store anything durably while the display
+runs.** Two independent findings, both settled on hardware on 2026-09-17:
+
+- The **microSD slot belongs to the RP2040**. GPIO 47 floats; the pin budget
+  has no room for an SD bus. `EXP_SD_CS` in the pin map is a carried-over
+  community constant that leads nowhere. See `HARDWARE.md`.
+- **The internal flash filesystem panics the chip** when touched while the RGB
+  panel refreshes: the panel's IRAM-safe VSYNC handler calls `gdma_hal_append`,
+  which is in flash, during the cache-disabled window of any flash operation.
+  Reliably, not as a race. See `decisions/0014`.
+
+`bsp/storage.*` is a complete LittleFS layer and it works - mounting before
+`displayBegin()` is the one safe window. It is simply not reachable afterwards,
+so `CFG_LOG_TO_FLASH` is 0.
+
+The route to durable logging is the **RP2040**: it owns the SD slot, it is a
+separate chip with no cache to lose, and it is reachable on
+`RP2040_UART_TX/RX`. It needs firmware and a protocol. Wi-Fi backhaul is the
+other route and needs no local storage at all.
+
+**Note this also implicates `Settings`.** NVS writes are the same hazard with a
+shorter window - one or two milliseconds, usually between VSYNCs. The project
+has been doing it since the start without a panic, which is luck with good
+odds. Do not add more flash writes.
 
 ### Registry - `src/core/registry.h`
 
@@ -67,6 +182,19 @@ advertisement out to registered listeners.
 `BleAdvertisementListener` and register it; the BLE client is one listener and
 carries no special status. The advertised-device pointer dies when the call
 returns, so copy what you need.
+
+**What goes out over that advertisement is a contract, not an implementation
+detail.** It is specified in `docs/ICD.md`, which is normative for both the
+firmware and the phone app, and enforced mechanically by
+`tools/check_icd.py`. Changing the frame without changing that document is the
+one way to put a confidently wrong number on somebody's phone.
+
+**And never call `NimBLEDevice::getAdvertising()` from anywhere else either.**
+`integrations/ble_broadcast.*` owns advertising, for the same reason
+`BleScanner` owns scanning: there is exactly one advertiser and whoever
+reconfigures it last wins. It advertises non-connectably, which is load-bearing
+rather than incidental - see the connection budget below, and
+`decisions/0016`.
 
 It keeps scanning while a connection is up, which the controller time-slices:
 measured at ~3.8 advertisements/sec with the BMS `online`, with the cooperative
@@ -139,6 +267,9 @@ it and handovers are silently dropped.
 
 A saved BMS address beats `CFG_BMS_MAC`, making the constant a seed rather than
 a commitment. See `decisions/0009`.
+
+It also stores the temperature unit - see **Units** above; the value it writes
+lives in `core/units.h` and `Settings` deliberately has no getter for it.
 
 It also stores a display name per BLE sensor, keyed by address, so a sensor can
 be called "Fridge" rather than `ATC_1a2b3c`. **NVS keys are capped at 15
@@ -217,6 +348,48 @@ Page layout constants live in `src/ui/theme.h` and at the top of
 `src/ui/ui.cpp`. The screen is 480x480 with a 44px header and a 64px nav bar,
 leaving 372px of content.
 
+**Almost every screen is built once in `ui::begin()` and kept for the life of
+the device**, overlays included. Refresh functions only change text and colour
+on widgets that already exist; a page that rebuilt its children at 4 Hz would
+fragment LVGL's pool in minutes. Two consequences follow:
+
+- Rows and tiles are created lazily *as sensors appear* and then reused. The
+  click handler is given a pointer to the slot's own `mac` buffer, which is
+  stable because the slot array never moves.
+- **The LVGL pool has to hold the whole UI at once**, so its size is a function
+  of how many screens exist and it grows every time one is added. That is why
+  `setup()` logs `lv_mem_monitor()` - exhausting it does not report itself. See
+  `decisions/0013`.
+
+**The one exception is the clock setter**, which is built when it is opened and
+freed when it is closed (`decisions/0015`). It is the escape hatch `0013` wrote
+down for when the pool gets tight, taken once. If you convert another overlay
+the same way, the rule that matters is that **every cached handle must be
+nulled synchronously in the close path, and the delete must be
+`lv_obj_delete_async()`** - it runs from inside a child's event callback.
+
+Measured on hardware 2026-09-17: the pool sits at 16,388 free / 73% used with
+everything built, drops to 10,844 while the clock setter is open, and returns
+to 16,296 at 2% fragmentation - unchanged after five open/close cycles.
+
+The Climate page is tiles, two across, scrolling; tapping one opens a detail
+overlay with the current readings, today's high and low, and a graph of the last
+24 hours. The Rename keyboard is reached from there. Renaming moved off the tile
+deliberately: a tap on a reading should show you the sensor, not offer to edit
+it.
+
+**Text entry and number entry are different problems.** `showTextEntry()` is one
+shared overlay - one `lv_keyboard`, several callers - for things that are
+genuinely text: a sensor's name today, Wi-Fi credentials later. Setting the
+clock is picking five numbers, and it gets steppers instead; a sixteen-character
+date on a touch keyboard was the first attempt and it was not usable. See
+`decisions/0015`.
+
+One trap in the shared overlay, because it has already been walked into: the
+save callback runs **after** the overlay closes, so `closeEntry()` must not
+clear state the callback still needs. It cleared `g_renameMac` once, and every
+rename silently did nothing.
+
 Settings is an overlay above the pages and the nav bar, opened by the gear in
 the header, rather than a fifth domain - the nav bar is about what the van can
 do. See `decisions/0009`.
@@ -228,13 +401,19 @@ it, because the crew could not have seen what was under their finger.
 
 ## Memory
 
-The tight resource is **internal RAM**, not flash. Measured 2026-09-07 after
-the NimBLE port: 1.6 MB of the 3.3 MB app partition, 107 KB static RAM, and
-~97 KB of free heap after boot.
+The tight resource is **internal RAM**, not flash. Measured 2026-09-17: 1.66 MB
+of the 3.3 MB app partition, **127 KB static RAM (38.9%)**, and **~75 KB of
+free heap after boot**. It was 107 KB and ~97 KB on 2026-09-07; the difference
+is `LV_MEM_SIZE` going from 48 KB to 64 KB (`decisions/0013`) plus 2.8 KB of
+sensor history.
 
-Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 48 KB
+Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 64 KB
 pool (`LV_MEM_SIZE`), the NimBLE host, and the BMS task's 8 KB stack - of which
 about 2 KB is actually used, so it is oversized on purpose while there is room.
+
+With every screen built, the LVGL pool sits at **18,940 bytes free, 69% used,
+1% fragmented** (hardware, 2026-09-17), and drops to ~16.4 KB with the sensor
+detail page open. Roughly two more screens of slack.
 
 ### Wi-Fi does not currently fit
 
@@ -251,7 +430,9 @@ steady state        heap  1972
 Bluedroid that left 1972 bytes, which is not a system you can build on.
 
 **Resolved by `decisions/0010`.** NimBLE returned 40 KB: free heap at boot went
-from 56,724 to 97,116, so Wi-Fi's 41 KB now fits with roughly 56 KB to spare.
+from 56,724 to 97,116, so Wi-Fi's 41 KB now fits. The margin is smaller than
+that today - free heap is ~75 KB since `decisions/0013`, so roughly 35 KB to
+spare rather than 56 KB.
 The measurements above were taken on Bluedroid and are kept because they are
 why the port happened.
 
@@ -268,15 +449,17 @@ libraries do not expose - the same wall as `decisions/0004`.
 
 ## `src/core/` runs on a laptop
 
-`entity.cpp`, `registry.cpp`, `alarms.cpp`, `bthome.cpp` and `switchbot.cpp`
-contain no hardware. That is not an accident of how they were written - it is a
-constraint, and `env:native` in `platformio.ini` enforces it:
+`entity.cpp`, `registry.cpp`, `alarms.cpp`, `bthome.cpp`,
+`bthome_encode.cpp`, `switchbot.cpp`, `units.cpp`, `history.cpp`,
+`clock.cpp` and `datalog.cpp` contain no hardware. That is not an
+accident of how they were written - it is a constraint, and
+`env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~3 s, 85 cases, no board
+pio test -e native        # ~9 s, 193 cases, no board
 ```
 
-Those five files are the only ones the test environment compiles. Anything
+Those nine files are the only ones the test environment compiles. Anything
 they include has to exist on a host compiler, so **a `#include` of a driver, a
 bus or NimBLE inside `src/core/` breaks the tests by construction** - which is
 the point. The rule is the whole reason this layer can be trusted while
@@ -294,8 +477,7 @@ Two things make it work:
   singletons, so without a way back to empty each test case would inherit the
   last one's state. The firmware binary is byte-identical with and without them.
 
-The Climate page reads `BtHomeSensors` directly rather than through the
-registry, for the same reason the cell screen asks the BMS directly: it is a
+The Climate page reads `EnvSensors` directly rather than through the registry, for the same reason the cell screen asks the BMS directly: it is a
 variable-length array of like things, and the entity model deliberately does
 not carry arrays. It is the same exception, not a new one - and the reason
 there is no `Registry::remove()` to worry about when a sensor slot is reused.
@@ -303,11 +485,15 @@ there is no `Registry::remove()` to worry about when a sensor slot is reused.
 `bthome.cpp` and `switchbot.cpp` are here for the same reason: decoding an
 advertisement is pure byte manipulation, and a wrong byte offset does not crash
 anything - it puts a plausible, wrong temperature on the screen, which is the
-worst failure mode available. `BleScanner` hands them the bytes; neither
+worst failure mode available. `units.cpp` and `history.cpp` are the same
+argument one step further on: a flipped conversion or an off-by-one in a ring
+buffer also draws a plausible, wrong picture rather than failing. `BleScanner` hands them the bytes; neither
 touches a radio itself.
 
 `settings.cpp` is deliberately outside all of this. It needs `Preferences`,
-which is NVS, which is the board.
+which is NVS, which is the board. `bsp/storage.cpp` is outside it for the same
+reason - which is why `datalog.cpp` holds only the text and the arithmetic, and
+the filesystem calls live in `bsp/`.
 
 CI runs the tests before the firmware build - they are 15 s against several
 minutes, so a broken core fails while you are still watching.

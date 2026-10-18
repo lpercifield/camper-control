@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.campercontrol.monitor"
+    android:versionCode="1"
+    android:versionName="0.1">
+
+    <!-- minSdk 31 on purpose. From Android 12, BLUETOOTH_SCAN with
+         neverForLocation is enough to scan, and the app never has to ask for
+         location at all - which on older releases was mandatory for any BLE
+         scan and is an absurd thing to ask for in order to read a battery.
+         Supporting Android 11 and earlier means adding ACCESS_FINE_LOCATION
+         and explaining why. See android/README.md. -->
+    <uses-sdk android:minSdkVersion="31" android:targetSdkVersion="35" />
+
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+
+    <uses-feature android:name="android.hardware.bluetooth_le"
+        android:required="true" />
+
+    <application android:label="Camper Control">
+        <!-- NoActionBar, and the app draws its own title. From Android 15 an
+             app targeting SDK 35 is edge-to-edge whether it asks or not, so
+             the window spans the whole screen and the decor title bar was
+             drawn over the top of our content. Owning the whole surface and
+             applying the window insets ourselves is simpler than negotiating
+             with it. See android/README.md. -->
+        <activity android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:label="Camper Control">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

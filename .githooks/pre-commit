@@ -21,10 +21,24 @@
 
 set -o pipefail
 
-[ -n "$SKIP_DOC_CHECK" ] && exit 0
 
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -z "$staged" ] && exit 0
+
+# The firmware and the phone app have to keep speaking the same protocol. The
+# contract is docs/ICD.md; tools/check_icd.py is the part of it a machine can
+# enforce, and it is cheap enough to run on every commit that touches either
+# end. SKIP_DOC_CHECK does not skip this: a protocol that has drifted is a
+# broken van, not a missing paragraph.
+icd=$(printf '%s\n' "$staged" | grep -E '^(src/|include/|android/|tools/check_icd\.py|docs/ICD\.md)' || true)
+if [ -n "$icd" ] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 tools/check_icd.py; then
+        echo "  (refusing the commit: the two ends disagree)" >&2
+        exit 1
+    fi
+fi
+
+[ -n "$SKIP_DOC_CHECK" ] && exit 0
 
 code=$(printf '%s\n' "$staged" | grep -E '^(src/|include/|lib/|tools/|platformio\.ini)' || true)
 docs=$(printf '%s\n' "$staged" | grep -E '^(docs/|CLAUDE\.md|README\.md|CONTRIBUTING\.md)' || true)
@@ -43,6 +57,7 @@ cat >&2 <<'MSG'
     a failure you diagnosed ........... docs/TROUBLESHOOTING.md  (by symptom)
     a patch to someone else's code .... docs/PORTING_NOTES.md
     an alternative you rejected ....... docs/decisions/
+    the controller/phone wire format .. docs/ICD.md
     work finished, or newly found ..... docs/ROADMAP.md
 
   If this closes a roadmap item, move it to that file's "Done" section with

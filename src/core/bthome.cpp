@@ -14,6 +14,8 @@ enum : uint8_t {
   kObjVoltage     = 0x0C,  // uint16, x0.001 V
   kObjHumidityU8  = 0x2E,  // uint8, x1 %
   kObjTemperature1= 0x45,  // sint16, x0.1 C
+  kObjPower       = 0x5C,  // sint32, x0.01 W
+  kObjCurrent     = 0x5D,  // sint16, x0.001 A
 };
 
 // Zero means "unknown", which the parser treats as a full stop.
@@ -26,6 +28,8 @@ uint8_t objectSize(uint8_t id) {
     case kObjHumidity:     return 2;
     case kObjVoltage:      return 2;
     case kObjTemperature1: return 2;
+    case kObjCurrent:      return 2;
+    case kObjPower:        return 4;
     default:               return 0;
   }
 }
@@ -35,6 +39,14 @@ uint16_t u16(const uint8_t* p) {
 }
 
 int16_t s16(const uint8_t* p) { return static_cast<int16_t>(u16(p)); }
+
+uint32_t u32(const uint8_t* p) {
+  return static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+         (static_cast<uint32_t>(p[2]) << 16) |
+         (static_cast<uint32_t>(p[3]) << 24);
+}
+
+int32_t s32(const uint8_t* p) { return static_cast<int32_t>(u32(p)); }
 
 }  // namespace
 
@@ -94,6 +106,18 @@ bool bthomeDecode(const uint8_t* data, size_t len, BtHome& out) {
         if (!out.haveVoltage) {
           out.voltageV = static_cast<float>(u16(v)) * 0.001f;
           out.haveVoltage = true;
+        }
+        break;
+      case kObjPower:
+        if (!out.havePower) {
+          out.powerW = static_cast<float>(s32(v)) * 0.01f;
+          out.havePower = true;
+        }
+        break;
+      case kObjCurrent:
+        if (!out.haveCurrent) {
+          out.currentA = static_cast<float>(s16(v)) * 0.001f;
+          out.haveCurrent = true;
         }
         break;
       default:

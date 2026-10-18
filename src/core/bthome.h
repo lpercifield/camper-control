@@ -34,12 +34,20 @@ struct BtHome {
   bool haveTemperature = false;
   bool haveHumidity = false;
   bool haveVoltage = false;
+  bool havePower = false;
+  bool haveCurrent = false;
 
   uint8_t packetId = 0;
   uint8_t batteryPct = 0;
   float temperatureC = 0.0f;
   float humidityPct = 0.0f;
   float voltageV = 0.0f;
+  // Both **signed**, and that is the whole reason they are here: the sign is
+  // what says whether the van is charging or draining. See the note on ranges
+  // in bthome_encode.h - BTHome's signed current field is narrower than this
+  // pack can actually draw.
+  float powerW = 0.0f;
+  float currentA = 0.0f;
 };
 
 // `data` is the BTHome service-data payload: everything *after* the two UUID
@@ -50,7 +58,7 @@ struct BtHome {
 // there and reports `complete = false` rather than guessing an offset and
 // decoding garbage. Ids are emitted in ascending order by convention, so the
 // small set understood here (packet id, battery, temperature, humidity,
-// voltage) arrives before the exotic ones.
+// voltage, power, current) arrives before the exotic ones.
 bool bthomeDecode(const uint8_t* data, size_t len, BtHome& out);
 
 }  // namespace cc
