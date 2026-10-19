@@ -20,6 +20,7 @@
 #include "integrations/lighting.h"
 #include "integrations/bms_jbd.h"
 #include "integrations/env_sensors.h"
+#include "integrations/system_info.h"
 #include "ui/ui.h"
 
 namespace {
@@ -80,13 +81,18 @@ void setup() {
   hub.add(&cc::lighting());
 #endif
 #if CFG_BLE_BROADCAST
-  // Last on purpose, and the order is load-bearing: this one reads the
+  // Last of the radio users, and the order is load-bearing: this one reads the
   // registry rather than filling it, and it needs NimBLE already up - which
   // the BMS integration's begin() does. It stands NimBLE up itself if the BMS
   // is ever disabled, but this way it never has to.
   hub.add(&cc::bleBroadcast());
 #endif
   // Future accessories land here: relay nodes, tank senders, the heater.
+  //
+  // Above the next line, not below it. systemInfo() walks the hub in its own
+  // begin() to give everything already added a link row on the System screen,
+  // so an integration registered after it gets no row.
+  hub.add(&cc::systemInfo());
   hub.begin();
 
   cc::ui::begin();

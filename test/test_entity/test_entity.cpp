@@ -4,6 +4,7 @@
 // decides whether a number on screen can still be believed. Both are pure
 // functions of state, so both are testable on a laptop.
 
+#include <string.h>
 #include <unity.h>
 
 #include "core/entity.h"
@@ -17,9 +18,9 @@ void tearDown() {}
 
 // ---- domainName -------------------------------------------------------------
 
-// Every domain must name itself. System is in the enum but has no page yet
-// (docs/ROADMAP.md), which is exactly the kind of half-wired domain this
-// catches - the enum and the name are meant to stay in step regardless.
+// Every domain must name itself, and the name is what the nav button is
+// labelled with - so a domain that is in the enum and not in the nav bar is
+// still caught here. System was exactly that for a long time.
 static void test_domain_names(void) {
   TEST_ASSERT_EQUAL_STRING("Power", domainName(Domain::Power));
   TEST_ASSERT_EQUAL_STRING("Lights", domainName(Domain::Lighting));
@@ -157,6 +158,69 @@ static void test_switch_kind_is_switch(void) {
   TEST_ASSERT_EQUAL(EntityKind::Switch, e.kind());
 }
 
+// ---- TextEntity -------------------------------------------------------------
+
+static void test_text_unset_reads_as_dashes(void) {
+  TextEntity e("system.uptime", "Uptime", Domain::System);
+  TEST_ASSERT_FALSE(e.everUpdated());
+  TEST_ASSERT_EQUAL_STRING("--", e.format(buf, sizeof(buf)));
+}
+
+static void test_text_kind_is_text(void) {
+  TextEntity e("system.uptime", "Uptime", Domain::System);
+  TEST_ASSERT_EQUAL(EntityKind::Text, e.kind());
+}
+
+static void test_text_round_trips(void) {
+  TextEntity e("system.uptime", "Uptime", Domain::System);
+  e.set("4d 02:17:33");
+  TEST_ASSERT_EQUAL_STRING("4d 02:17:33", e.value());
+  TEST_ASSERT_EQUAL_STRING("4d 02:17:33", e.format(buf, sizeof(buf)));
+}
+
+// The whole point of this kind: it copies. The publisher formats into a stack
+// buffer and the entity has to outlive it.
+static void test_text_owns_its_copy(void) {
+  TextEntity e("system.i2c", "I2C bus", Domain::System);
+  {
+    char scratch[16];
+    snprintf(scratch, sizeof(scratch), "0x20 0x48");
+    e.set(scratch);
+    memset(scratch, 'x', sizeof(scratch));
+  }
+  TEST_ASSERT_EQUAL_STRING("0x20 0x48", e.value());
+}
+
+static void test_text_truncates_rather_than_overruns(void) {
+  TextEntity e("system.link0", "Battery", Domain::System);
+  // 40 characters into a 32-byte field.
+  e.set("0123456789012345678901234567890123456789");
+  TEST_ASSERT_EQUAL(TextEntity::kMaxLen - 1, strlen(e.value()));
+}
+
+static void test_text_null_is_empty_not_a_crash(void) {
+  TextEntity e("system.i2c", "I2C bus", Domain::System);
+  e.set(nullptr);
+  TEST_ASSERT_TRUE(e.everUpdated());
+  TEST_ASSERT_EQUAL_STRING("", e.value());
+}
+
+static void test_text_survives_a_useless_buffer(void) {
+  TextEntity e("system.i2c", "I2C bus", Domain::System);
+  e.set("0x20");
+  TEST_ASSERT_NOT_NULL(e.format(nullptr, sizeof(buf)));
+  TEST_ASSERT_NOT_NULL(e.format(buf, 0));
+}
+
+// An empty string is a value, not an absence - a bus with nothing on it would
+// otherwise read as a row that has never reported.
+static void test_text_empty_still_counts_as_updated(void) {
+  TextEntity e("system.i2c", "I2C bus", Domain::System);
+  e.set("");
+  TEST_ASSERT_TRUE(e.everUpdated());
+  TEST_ASSERT_EQUAL_STRING("", e.format(buf, sizeof(buf)));
+}
+
 // ---- Staleness --------------------------------------------------------------
 
 static void test_never_updated_is_stale(void) {
@@ -226,6 +290,14 @@ int main(int, char**) {
   RUN_TEST(test_switch_reports_a_rejected_write);
   RUN_TEST(test_switch_without_a_writer_fails_closed);
   RUN_TEST(test_switch_kind_is_switch);
+  RUN_TEST(test_text_unset_reads_as_dashes);
+  RUN_TEST(test_text_kind_is_text);
+  RUN_TEST(test_text_round_trips);
+  RUN_TEST(test_text_owns_its_copy);
+  RUN_TEST(test_text_truncates_rather_than_overruns);
+  RUN_TEST(test_text_null_is_empty_not_a_crash);
+  RUN_TEST(test_text_survives_a_useless_buffer);
+  RUN_TEST(test_text_empty_still_counts_as_updated);
   RUN_TEST(test_never_updated_is_stale);
   RUN_TEST(test_fresh_value_is_not_stale);
   RUN_TEST(test_stale_boundary);

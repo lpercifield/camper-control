@@ -66,8 +66,10 @@ bool g_screenOff = false;
 
 uint32_t lvglTick() { return millis(); }
 
-// TEMPORARY bring-up counters. If flushes stay at 0 the fault is upstream in
-// LVGL; if they climb while the panel stays dark it is the GFX/panel path.
+// The two counters the debugging protocol in CLAUDE.md starts from. If flushes
+// stay at 0 the fault is upstream in LVGL; if they climb while the panel stays
+// dark it is the GFX/panel path. Cumulative, and read as a delta - the
+// heartbeat below logs them and the System screen turns them into rates.
 volatile uint32_t g_flushCount = 0;
 volatile uint32_t g_loopCount = 0;
 
@@ -124,23 +126,6 @@ void touchReadCb(lv_indev_t* /*indev*/, lv_indev_data_t* data) {
   data->state = LV_INDEV_STATE_PRESSED;
 }
 
-// Bring-up aid: what is actually answering on the bus. "Touch not found" is a
-// much easier problem when you can see whether the expander is alone out there.
-void scanI2C(const char* when) {
-  char found[96] = {0};
-  size_t off = 0;
-  int n = 0;
-  for (uint8_t addr = 0x08; addr < 0x78; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() != 0) continue;
-    n++;
-    if (off + 6 < sizeof(found)) {
-      off += snprintf(found + off, sizeof(found) - off, "0x%02X ", addr);
-    }
-  }
-  log_i("i2c scan (%s): %d device(s) %s", when, n, n ? found : "- bus empty");
-}
-
 uint16_t* allocBuffer(uint32_t pixels) {
   uint16_t* p = static_cast<uint16_t*>(
       heap_caps_malloc(pixels * sizeof(uint16_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -154,6 +139,32 @@ uint16_t* allocBuffer(uint32_t pixels) {
 }  // namespace
 
 PCA9535& expander() { return g_expander; }
+
+uint32_t loopCount() { return g_loopCount; }
+uint32_t flushCount() { return g_flushCount; }
+
+// Bring-up aid, and now also the System screen's "what is on the bus" row.
+// "Touch not found" is a much easier problem when you can see whether the
+// expander is alone out there.
+int scanI2C(const char* when, char* out, size_t len) {
+  char found[96] = {0};
+  size_t off = 0;
+  int n = 0;
+  for (uint8_t addr = 0x08; addr < 0x78; addr++) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() != 0) continue;
+    n++;
+    if (off + 6 < sizeof(found)) {
+      off += snprintf(found + off, sizeof(found) - off, "0x%02X ", addr);
+    }
+  }
+  // The trailing space is harmless in a log line and wrong on a right-aligned
+  // label, so it goes before anyone can draw it.
+  if (off > 0 && found[off - 1] == ' ') found[--off] = '\0';
+  log_i("i2c scan (%s): %d device(s) %s", when, n, n ? found : "- bus empty");
+  if (out && len > 0) snprintf(out, len, "%s", n ? found : "none");
+  return n;
+}
 
 void setBacklight(uint8_t level) {
   g_backlightLevel = level;
@@ -248,7 +259,9 @@ void displayLoop() {
   g_loopCount++;
   lv_timer_handler();
 
-  // TEMPORARY bring-up heartbeat.
+  // The heartbeat. Kept, and deliberately not moved to the System screen alone:
+  // the protocol that needs it most starts with a blank screen, and a blank
+  // screen shows no page. See CLAUDE.md and docs/TROUBLESHOOTING.md.
   static uint32_t lastBeat = 0;
   if (millis() - lastBeat > 2000) {
     lastBeat = millis();

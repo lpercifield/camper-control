@@ -96,6 +96,57 @@ static void test_format_survives_a_useless_buffer(void) {
   TEST_ASSERT_EQUAL_STRING("", Clock::formatDate(0, buf, 0));
 }
 
+// ---- durations --------------------------------------------------------------
+// Uptime, which is the one time value this device always knows. Separate from
+// the calendar above on purpose: a duration has no timezone, no epoch and no
+// leap years, and the days field counts rather than names.
+
+static void test_duration_under_a_day_has_no_days_field(void) {
+  char buf[32];
+  TEST_ASSERT_EQUAL_STRING("00:00:00", Clock::formatDuration(0, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("00:00:01", Clock::formatDuration(1000, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("02:17:33",
+                           Clock::formatDuration(8253000ULL, buf, sizeof(buf)));
+  // One second short of a day is still the short form.
+  TEST_ASSERT_EQUAL_STRING("23:59:59",
+                           Clock::formatDuration(86399000ULL, buf, sizeof(buf)));
+}
+
+static void test_duration_gains_a_days_field_at_a_day(void) {
+  char buf[32];
+  TEST_ASSERT_EQUAL_STRING("1d 00:00:00",
+                           Clock::formatDuration(86400000ULL, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("4d 02:17:33",
+                           Clock::formatDuration(4ULL * 86400000ULL + 8253000ULL,
+                                                 buf, sizeof(buf)));
+}
+
+// The reason the argument is 64-bit. millis() wraps at ~49.7 days, so a
+// counter that accumulated deltas has to keep running past the point where a
+// uint32 of milliseconds cannot hold the answer.
+static void test_duration_runs_past_the_millis_wrap(void) {
+  char buf[32];
+  const uint64_t wrap = 4294967296ULL;  // 2^32 ms, ~49.7 days
+  TEST_ASSERT_EQUAL_STRING("49d 17:02:47",
+                           Clock::formatDuration(wrap, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_STRING("120d 00:00:00",
+                           Clock::formatDuration(120ULL * 86400000ULL, buf,
+                                                 sizeof(buf)));
+}
+
+// Sub-second remainders are dropped, not rounded: a clock that reads 00:00:01
+// when 1.9 s have passed is what every other clock does.
+static void test_duration_truncates_the_remainder(void) {
+  char buf[32];
+  TEST_ASSERT_EQUAL_STRING("00:00:01", Clock::formatDuration(1999, buf, sizeof(buf)));
+}
+
+static void test_duration_survives_a_useless_buffer(void) {
+  char buf[4];
+  TEST_ASSERT_EQUAL_STRING("", Clock::formatDuration(1000, nullptr, 8));
+  TEST_ASSERT_EQUAL_STRING("", Clock::formatDuration(1000, buf, 0));
+}
+
 // ---- ticking ----------------------------------------------------------------
 
 static void test_unset_clock_does_not_run(void) {
@@ -325,6 +376,11 @@ int main(int, char**) {
   RUN_TEST(test_leap_day_itself);
   RUN_TEST(test_formatting);
   RUN_TEST(test_format_survives_a_useless_buffer);
+  RUN_TEST(test_duration_under_a_day_has_no_days_field);
+  RUN_TEST(test_duration_gains_a_days_field_at_a_day);
+  RUN_TEST(test_duration_runs_past_the_millis_wrap);
+  RUN_TEST(test_duration_truncates_the_remainder);
+  RUN_TEST(test_duration_survives_a_useless_buffer);
   RUN_TEST(test_unset_clock_does_not_run);
   RUN_TEST(test_clock_advances_with_millis);
   RUN_TEST(test_sub_second_ticks_do_not_advance_it);

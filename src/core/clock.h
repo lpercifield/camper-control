@@ -99,6 +99,12 @@ class Clock {
   // "2026-09-17 14:03"
   static const char* formatStamp(Epoch e, char* buf, size_t len);
 
+  // A **duration**, not a time of day: "4d 02:17:33", or "02:17:33" below a
+  // day. Takes milliseconds as a 64-bit count so a caller can accumulate past
+  // the 49-day millis() wrap, which is the whole reason uptime is not simply
+  // millis() formatted. The System screen is the caller.
+  static const char* formatDuration(uint64_t ms, char* buf, size_t len);
+
 #ifdef CC_NATIVE_TEST
   void testReset() {
     epoch_ = 0;

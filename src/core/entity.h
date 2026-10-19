@@ -13,7 +13,7 @@ namespace cc {
 
 enum class Domain : uint8_t { Power, Lighting, Water, Climate, System, COUNT };
 
-enum class EntityKind : uint8_t { Numeric, Binary, Switch };
+enum class EntityKind : uint8_t { Numeric, Binary, Switch, Text };
 
 const char* domainName(Domain d);
 
@@ -115,6 +115,32 @@ class SwitchEntity : public BinaryEntity {
 
  private:
   Writer writer_;
+};
+
+// ---- A line of text ---------------------------------------------------------
+// For a reading that is neither a number nor a flag: an uptime, what answered
+// on the I2C bus, an integration's own words about its link.
+//
+// It **owns** its text rather than holding a pointer, which is the opposite of
+// id_ and name_. Those are compile-time literals; a value is built at runtime
+// by whoever publishes it, usually into a stack buffer, and a borrowed pointer
+// would have to outlive the entity. Nothing that wants one of these can
+// promise that.
+class TextEntity : public Entity {
+ public:
+  // Long enough for "4d 02:17:33" and a short status line. Anything longer is
+  // truncated rather than refused: a row 456 px wide cannot draw it either.
+  static constexpr size_t kMaxLen = 32;
+
+  TextEntity(const char* id, const char* name, Domain domain);
+
+  void set(const char* text);
+  const char* value() const { return text_; }
+
+  const char* format(char* buf, size_t len) const override;
+
+ private:
+  char text_[kMaxLen] = {0};
 };
 
 }  // namespace cc

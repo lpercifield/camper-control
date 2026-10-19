@@ -99,4 +99,20 @@ bool SwitchEntity::command(bool on) {
   return writer_(on);
 }
 
+// ---- TextEntity -------------------------------------------------------------
+
+TextEntity::TextEntity(const char* id, const char* name, Domain domain)
+    : Entity(id, name, domain, EntityKind::Text) {}
+
+void TextEntity::set(const char* text) {
+  snprintf(text_, sizeof(text_), "%s", text ? text : "");
+  markUpdated();
+}
+
+const char* TextEntity::format(char* buf, size_t len) const {
+  if (!buf || len == 0) return "";
+  snprintf(buf, len, "%s", everUpdated() ? text_ : "--");
+  return buf;
+}
+
 }  // namespace cc

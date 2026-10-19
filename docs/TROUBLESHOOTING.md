@@ -24,16 +24,31 @@ Every entry here happened; none are hypothetical.
 
 Two checks answer most questions before you start guessing.
 
-**Is the loop running?** `src/bsp/display.cpp:displayLoop` can log a heartbeat:
+**Is the loop running?** `src/bsp/display.cpp:displayLoop` logs a heartbeat
+every two seconds:
 
 ```
-hb: loops=395326 flushes=420 scr=0x3fca45e8 children=6 heap=70736
+hb: loops=661363 flushes=1803 scr=0x3fca6160 children=10 heap=66028
 ```
 
-If `loops` climbs (~46k/sec) and `flushes` climbs (~48/sec), the firmware is
-alive and rendering, and your problem is above the loop. If `loops` is stuck or
-the heartbeat never appears at all, something is blocking inside `loop()` and
-nothing else you observe is meaningful yet.
+Both numbers are **cumulative since boot**, so read the delta between two
+lines. Measured on hardware 2026-10-18 with the BMS, a fixture, the sensors and
+the phone broadcast all up, on the Power page: **~39,100 loops and 168 flushes
+per heartbeat**, i.e. ~19.6k loops/sec and 84 flushes/sec. If both climb, the
+firmware is alive and rendering and your problem is above the loop. If `loops`
+is stuck or the heartbeat never appears at all, something is blocking inside
+`loop()` and nothing else you observe is meaningful yet.
+
+The flush rate is the one to trust. It has been 84/sec across the phone
+broadcast, the lighting integration and the System screen, each of which took a
+few percent off the loop rate; a loop figure compared against an older number
+is how you spend an afternoon chasing a change that was paid for on purpose.
+
+**The same figures are on the System screen** - the gear, then View on the
+System card - along with uptime, free heap and its low water mark, the LVGL
+pool, the I2C bus and one line per integration. No cable needed. If the
+panel is blank that screen is no use to you and the heartbeat is, which is
+why both still exist.
 
 **Is the panel alive?** Put `g_gfx->fillScreen(RED); delay(1000);` immediately
 after `g_gfx->begin()` in `displayBegin()`. Red means the panel, pins and DMA
@@ -247,8 +262,8 @@ integration 'JBD BMS' held the loop for 6010 ms
 
 `Touch::read` is called from LVGL's input timer inside the same cooperative
 loop, so a stalled integration stops touch being polled at all. Confirm by
-correlating the heartbeat: a healthy window is ~80,000 loops and 96 flushes per
-two seconds, and a stalled one shows single digits.
+correlating the heartbeat: a healthy window is ~39,100 loops and 168 flushes
+per two seconds (2026-10-18), and a stalled one shows single digits.
 
 The instance we hit was a synchronous `connect()` retrying against an absent
 BMS. Fixed by moving that integration to its own task - `decisions/0008`. The
@@ -256,7 +271,9 @@ NimBLE port did not change that: connect is still synchronous, and the task is
 what keeps it off the UI core.
 
 **Touch not detected at all.** Scan the bus before assuming a dead controller;
-`displayBegin` logs `i2c scan (boot)` at every startup. This board's controller
+`displayBegin` logs `i2c scan (boot)` at every startup, and the System screen
+carries the same answer with no cable attached - `SystemInfo::begin` asks
+`bsp::scanI2C` once and publishes it. This board's controller
 is at `0x48`, not the `0x38` its datasheet family uses. See `HARDWARE.md`.
 
 ## Data

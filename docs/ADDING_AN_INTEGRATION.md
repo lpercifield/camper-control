@@ -46,7 +46,9 @@ class WaterPump : public Integration {
 }  // namespace cc
 ```
 
-Then one line in `setup()`:
+Then one line in `setup()`, **above `hub.add(&systemInfo())`**: that one walks
+the hub in its own `begin()` to build a link row per integration, so anything
+registered after it gets no row on the System screen.
 
 ```cpp
 hub.add(&waterPump());
@@ -82,6 +84,13 @@ reading. No UI code changes.
   should show the truth, not the last thing we wished for.
 - **Entity ids are `domain.thing`** and must be unique - the registry drops
   duplicates with a warning.
+- **A figure about the controller rather than about the van goes in
+  `Domain::System`** - a link counter, a buffer high-water mark, a retry
+  count. The System screen - the gear, then View - is built from
+  `Registry::inDomain`, so it appears with no UI change, and it draws a
+  `TextEntity` as happily as a number. Two things to know: it is a text
+  table, so a line there does not grey when it goes stale and cannot be
+  tapped (`decisions/0023`), and a dozen lines is what fits.
 - **Do not touch the filesystem.** Not from `begin()`, not from `loop()`. Any
   flash access while the RGB panel refreshes panics the chip - see
   `decisions/0014`. If an integration needs to persist something, it goes

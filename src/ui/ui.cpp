@@ -46,10 +46,16 @@ lv_obj_t* g_headerTitle = nullptr;
 lv_obj_t* g_headerStatus = nullptr;
 
 lv_obj_t* g_pages[(int)Domain::COUNT] = {nullptr};
-lv_obj_t* g_navButtons[4] = {nullptr};
 
-// Settings is an overlay rather than a fifth domain: it is not an accessory,
-// and the nav bar is about what the van can do.
+// One per nav button, and kNavDomains below says which domain each one shows.
+// A constant rather than a literal 4 in five places, which is how
+// Domain::System came to exist with no way to reach it at all.
+constexpr int kNavCount = 4;
+lv_obj_t* g_navButtons[kNavCount] = {nullptr};
+
+// Settings and System are overlays rather than domains of their own: neither
+// is an accessory, and the nav bar is about what the van can do. Both are
+// reached from the gear in the header.
 lv_obj_t* g_settings = nullptr;
 lv_obj_t* g_setBmsValue = nullptr;
 lv_obj_t* g_setBrightValue = nullptr;
@@ -145,12 +151,22 @@ DateTime g_clockEdit;
 // Climate: why the log is or is not running.
 lv_obj_t* g_climateStatus = nullptr;
 
+// System: an overlay opened from Settings, and the whole of it is two labels.
+// See buildSystem().
+lv_obj_t* g_system = nullptr;
+lv_obj_t* g_sysNames = nullptr;
+lv_obj_t* g_sysValues = nullptr;
+
 // Detail: today's high and low, from the per-minute log rather than the graph.
 lv_obj_t* g_detailTempToday = nullptr;
 lv_obj_t* g_detailHumToday = nullptr;
 
-const Domain kNavDomains[4] = {Domain::Power, Domain::Lighting, Domain::Water,
-                               Domain::Climate};
+// What the van can do. Domain::System is deliberately absent - it is how the
+// van is doing, which is the gear's business, not the nav bar's.
+const Domain kNavDomains[kNavCount] = {Domain::Power, Domain::Lighting,
+                                       Domain::Water, Domain::Climate};
+static_assert(sizeof(kNavDomains) / sizeof(kNavDomains[0]) == kNavCount,
+              "every nav button needs a domain");
 
 // ---- small helpers ----------------------------------------------------------
 
@@ -176,9 +192,11 @@ lv_obj_t* makeLabel(lv_obj_t* parent, const char* text, const lv_font_t* font,
   return l;
 }
 
-// Defined with the clock setter further down, next to the overlay it opens;
-// buildSettings() needs the name up here.
+// All three are defined with the overlay they open, further down;
+// buildSettings() and buildSystem() need the names up here.
 void setClockCb(lv_event_t* e);
+void openSystemCb(lv_event_t* e);
+void closeSystemCb(lv_event_t* e);
 
 void refreshSettings() {
   if (!g_settings) return;
@@ -468,6 +486,26 @@ void buildSettings(lv_obj_t* scr) {
   lv_obj_t* clearLabel = makeLabel(clear, "Forget", &lv_font_montserrat_16, colText());
   lv_obj_center(clearLabel);
 
+  // ---- system ----
+  // Diagnostics live behind a button rather than on the nav bar: the nav bar
+  // is what the van can do, and this is how the van is doing. Same argument
+  // that put Settings itself here - `decisions/0009`.
+  lv_obj_t* sysCard = makeCard(body, 0, 0, w, 96);
+  lv_obj_t* sysName = makeLabel(sysCard, "System", &lv_font_montserrat_16,
+                                colMuted());
+  lv_obj_align(sysName, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_t* sysHint = makeLabel(sysCard, "uptime, memory, links, I2C bus",
+                                &lv_font_montserrat_16, colText());
+  lv_obj_align(sysHint, LV_ALIGN_LEFT_MID, 0, 6);
+
+  lv_obj_t* openSys = lv_button_create(sysCard);
+  lv_obj_set_size(openSys, 92, 40);
+  lv_obj_align(openSys, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_set_style_radius(openSys, 8, 0);
+  lv_obj_set_style_bg_color(openSys, colCardEdge(), 0);
+  lv_obj_add_event_cb(openSys, openSystemCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_center(makeLabel(openSys, "View", &lv_font_montserrat_16, colText()));
+
   // ---- wifi placeholder ----
   lv_obj_t* wifi = makeCard(body, 0, 0, w, 72);
   lv_obj_t* wifiName = makeLabel(wifi, "Wi-Fi backhaul", &lv_font_montserrat_16,
@@ -488,8 +526,8 @@ void buildNav(lv_obj_t* scr) {
   lv_obj_set_style_pad_all(nav, 6, 0);
   lv_obj_remove_flag(nav, LV_OBJ_FLAG_SCROLLABLE);
 
-  const int w = (kScreenW - 12) / 4;
-  for (int i = 0; i < 4; i++) {
+  const int w = (kScreenW - 12) / kNavCount;
+  for (int i = 0; i < kNavCount; i++) {
     lv_obj_t* b = lv_button_create(nav);
     lv_obj_set_pos(b, i * w, 0);
     lv_obj_set_size(b, w - 6, kNavH - 12);
@@ -1399,9 +1437,13 @@ void refreshClimatePage() {
                               needsClock ? colWarn() : colMuted(), 0);
 }
 
-// Lights / Water: nothing is wired up yet, so these pages list any
-// entities that exist in the domain and otherwise say plainly that the domain
-// is waiting for an integration.
+// The generic domain page: one row per entity in the domain, name on the left
+// and value on the right, and a line saying plainly that the domain is waiting
+// for an integration when it holds none. Lighting and Water use it.
+//
+// **A row here is not cheap.** A styled card and two labels measured about
+// 740 bytes of the LVGL pool on hardware, which is why the System screen draws
+// its dozen figures as a text table instead - see buildSystemPage().
 void buildDomainPage(lv_obj_t* scr, Domain d) {
   lv_obj_t* p = makePage(scr);
   g_pages[(int)d] = p;
@@ -1422,6 +1464,153 @@ void buildDomainPage(lv_obj_t* scr, Domain d) {
   lv_obj_set_style_text_align(g_emptyLabel[(int)d], LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(g_emptyLabel[(int)d]);
 }
+
+// ---- the System overlay -----------------------------------------------------
+// Diagnostics: uptime, heap, the LVGL pool, the loop and flush rates, the I2C
+// bus, the broadcast's frame rate, and one line per integration. Every figure
+// here was readable only over a serial cable before this screen existed.
+//
+// **An overlay reached from Settings, not a nav button.** The nav bar is what
+// the van can do; this is how the van is doing, which is the gear's business -
+// the same argument that keeps Settings off the nav bar (`decisions/0009`).
+//
+// **It is a two-column text table, not the card rows the domain pages use**,
+// and that is a measurement rather than a preference. Twelve generic rows cost
+// 8.9 KB of the LVGL pool on hardware - 75% used to 90%, with 6.3 KB left and
+// the clock setter needing 5.5 KB of it when the crew taps Set. That is the
+// exhaustion `decisions/0013` is the record of, and it does not report itself.
+// Two labels cost about a kilobyte and the twelve lines all fit on one screen,
+// where twelve 56 px cards would have needed scrolling.
+//
+// It is built **from the registry**, not from a list of figures, so an entity
+// registered in `Domain::System` by some later integration appears here
+// without this file changing. That domain having nowhere to appear at all was
+// the trap this screen closes.
+//
+// One thing the table gives up: there is no amber for a stale line, because a
+// colour belongs to a widget and these lines are text inside one. Nothing here
+// goes stale in practice - `SystemInfo` republishes every second - and an
+// entity that never reported at all still prints its own "--".
+void buildSystem(lv_obj_t* scr) {
+  g_system = lv_obj_create(scr);
+  lv_obj_set_pos(g_system, 0, 0);
+  lv_obj_set_size(g_system, kScreenW, kScreenH);
+  lv_obj_set_style_bg_color(g_system, colBg(), 0);
+  lv_obj_set_style_border_width(g_system, 0, 0);
+  lv_obj_set_style_radius(g_system, 0, 0);
+  lv_obj_set_style_pad_all(g_system, 0, 0);
+  lv_obj_remove_flag(g_system, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(g_system, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* bar = lv_obj_create(g_system);
+  lv_obj_set_pos(bar, 0, 0);
+  lv_obj_set_size(bar, kScreenW, kHeaderH);
+  lv_obj_set_style_bg_color(bar, colCard(), 0);
+  lv_obj_set_style_border_width(bar, 0, 0);
+  lv_obj_set_style_radius(bar, 0, 0);
+  lv_obj_set_style_pad_all(bar, 0, 0);
+  lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+
+  // domainName() rather than a literal, so the enum and the label cannot
+  // drift - test_entity.cpp:test_domain_names is what holds them together.
+  lv_obj_t* title = makeLabel(bar, domainName(Domain::System),
+                              &lv_font_montserrat_20, colText());
+  lv_obj_align(title, LV_ALIGN_LEFT_MID, 14, 0);
+
+  lv_obj_t* close = lv_button_create(bar);
+  lv_obj_set_size(close, 40, 34);
+  lv_obj_align(close, LV_ALIGN_RIGHT_MID, -8, 0);
+  lv_obj_set_style_radius(close, 8, 0);
+  lv_obj_set_style_bg_color(close, colBg(), 0);
+  lv_obj_add_event_cb(close, closeSystemCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_center(makeLabel(close, LV_SYMBOL_CLOSE, &lv_font_montserrat_20,
+                          colMuted()));
+
+  // Scrollable, unlike the cards elsewhere: this is the one container in the
+  // project whose contents can outgrow it, because the next integration to
+  // register a System entity adds a line.
+  lv_obj_t* card = lv_obj_create(g_system);
+  lv_obj_set_pos(card, 12, kHeaderH + 12);
+  lv_obj_set_size(card, kScreenW - 24, kScreenH - kHeaderH - 24);
+  lv_obj_set_style_bg_color(card, colCard(), 0);
+  lv_obj_set_style_border_color(card, colCardEdge(), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 10, 0);
+  lv_obj_set_style_pad_all(card, 14, 0);
+
+  // Two labels, one line per entity, aligned by sharing a font and a line
+  // spacing rather than by being in the same widget.
+  g_sysNames = makeLabel(card, "", &lv_font_montserrat_16, colMuted());
+  lv_obj_set_style_text_line_space(g_sysNames, 8, 0);
+  lv_obj_align(g_sysNames, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  g_sysValues = makeLabel(card, "", &lv_font_montserrat_16, colText());
+  lv_obj_set_style_text_line_space(g_sysValues, 8, 0);
+  lv_obj_set_width(g_sysValues, 240);
+  lv_obj_set_style_text_align(g_sysValues, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_align(g_sysValues, LV_ALIGN_TOP_RIGHT, 0, 0);
+}
+
+void refreshSystem() {
+  Registry& reg = Registry::instance();
+  std::vector<Entity*> items = reg.inDomain(Domain::System);
+
+  // One buffer per column, filled once and set once. Generous rather than
+  // tight: this is the only page whose length is decided by whatever future
+  // integrations register, and snprintf truncates where a smaller budget
+  // would have had to refuse.
+  char names[480];
+  char values[320];
+  size_t no = 0;
+  size_t vo = 0;
+  char buf[40];
+
+  // snprintf returns the length it *wanted* to write, so a line that did not
+  // fit parks the offset at the end of the buffer and every later line is
+  // skipped rather than written over the terminator.
+  auto append = [](char* dst, size_t cap, size_t& off, const char* nl,
+                   const char* text) {
+    if (off + 1 >= cap) return;
+    const int n = snprintf(dst + off, cap - off, "%s%s", nl, text);
+    if (n > 0) off += (size_t)n;
+    if (off >= cap) off = cap - 1;
+  };
+
+  for (size_t i = 0; i < items.size(); i++) {
+    const char* nl = (i == 0) ? "" : "\n";
+    append(names, sizeof(names), no, nl, items[i]->name());
+    append(values, sizeof(values), vo, nl, items[i]->format(buf, sizeof(buf)));
+  }
+
+  if (items.empty()) {
+    snprintf(names, sizeof(names), "No diagnostics registered.");
+    values[0] = '\0';
+  }
+
+  lv_label_set_text(g_sysNames, names);
+  lv_label_set_text(g_sysValues, values);
+}
+
+bool systemVisible() {
+  return g_system && !lv_obj_has_flag(g_system, LV_OBJ_FLAG_HIDDEN);
+}
+
+void showSystem(bool visible) {
+  if (!g_system) return;
+  if (visible) {
+    // Filled before it is shown, so the screen never appears blank for the
+    // quarter second until the next tick.
+    refreshSystem();
+    lv_obj_remove_flag(g_system, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(g_system, LV_OBJ_FLAG_HIDDEN);
+  }
+  bsp::wakeBacklight();
+}
+
+// Closing it reveals Settings again, which is where it was opened from.
+void openSystemCb(lv_event_t* /*e*/) { showSystem(true); }
+void closeSystemCb(lv_event_t* /*e*/) { showSystem(false); }
 
 // ---- refresh ----------------------------------------------------------------
 
@@ -1618,6 +1807,10 @@ void onEntityRowClicked(lv_event_t* e) {
 
 void refreshDomainPage(Domain d) {
   lv_obj_t* list = g_entityList[(int)d];
+  // Not every domain has a generic page: Power and Climate have their own, and
+  // System is an overlay. Dereferencing a page that was never built is how
+  // a domain missing from kNavDomains used to present.
+  if (list == nullptr) return;
   Registry& reg = Registry::instance();
   std::vector<Entity*> items = reg.inDomain(d);
 
@@ -1667,9 +1860,34 @@ void refreshDomainPage(Domain d) {
   }
 }
 
+// The one place that knows which refresh belongs to which page. tick() calls
+// it on a timer; showDomain() calls it the instant a page appears, because the
+// generic pages build their rows in the refresh and a page that waited a tick
+// for them would show empty first.
+void refreshCurrentPage() {
+  switch (g_current) {
+    case Domain::Power:
+      refreshPowerPage();
+      break;
+    case Domain::Climate:
+      refreshClimatePage();
+      break;
+    default:
+      refreshDomainPage(g_current);
+      break;
+  }
+}
+
 }  // namespace
 
 void showDomain(Domain d) {
+  // A domain with no page would hide every page and leave a blank screen,
+  // which is a hard thing to diagnose from the outside. Say so instead.
+  if (g_pages[(int)d] == nullptr) {
+    log_w("ui: no page for domain %s", domainName(d));
+    return;
+  }
+  const Domain was = g_current;
   g_current = d;
   for (int i = 0; i < (int)Domain::COUNT; i++) {
     if (!g_pages[i]) continue;
@@ -1679,13 +1897,29 @@ void showDomain(Domain d) {
       lv_obj_add_flag(g_pages[i], LV_OBJ_FLAG_HIDDEN);
     }
   }
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < kNavCount; i++) {
     const bool active = kNavDomains[i] == d;
     lv_obj_set_style_bg_color(g_navButtons[i], active ? colAccent() : colBg(), 0);
     lv_obj_t* lab = lv_obj_get_child(g_navButtons[i], 0);
     lv_obj_set_style_text_color(lab, active ? lv_color_black() : colMuted(), 0);
   }
+  refreshCurrentPage();
   refreshHeader();
+
+  // **The figure setup() logs is not the whole UI.** Rows on the generic
+  // domain pages are built on first view, not at boot, so a page nobody has
+  // opened costs nothing yet and the boot figure understates the pool. This is
+  // the only place that can see the difference - and decisions/0013 is explicit
+  // that exhausting the pool does not report itself. On a change only; tapping
+  // the domain you are already on is not news.
+  if (was != d) {
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    log_i("lvgl pool on %s: free %u largest %u used %u%% frag %u%%",
+          domainName(d), (unsigned)mon.free_size,
+          (unsigned)mon.free_biggest_size, (unsigned)mon.used_pct,
+          (unsigned)mon.frag_pct);
+  }
 }
 
 void begin() {
@@ -1702,6 +1936,7 @@ void begin() {
   buildNav(scr);
   buildDetail(scr);    // above the pages and the nav bar
   buildSettings(scr);  // and above that, so the gear still wins
+  buildSystem(scr);    // and above that: it is opened from Settings
   buildEntry(scr);     // and the shared keyboard above even that
   // The clock setter is deliberately absent: it is built when the gear's Set
   // button is tapped and freed when it closes. See closeClockSet().
@@ -1714,17 +1949,10 @@ void tick() {
   g_lastTickMs = millis();
 
   refreshHeader();
-  switch (g_current) {
-    case Domain::Power:
-      refreshPowerPage();
-      break;
-    case Domain::Climate:
-      refreshClimatePage();
-      break;
-    default:
-      refreshDomainPage(g_current);
-      break;
-  }
+  refreshCurrentPage();
+  // Above whichever page is current, and every figure on it moves, so it
+  // refreshes on the tick rather than only when it opens.
+  if (systemVisible()) refreshSystem();
 }
 
 }  // namespace ui

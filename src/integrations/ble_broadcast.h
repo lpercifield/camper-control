@@ -31,9 +31,9 @@ class BleBroadcast : public Integration {
   bool begin() override;
   void loop() override;
 
-  // Diagnostics, for the System page whenever design gap 1 is closed. These
-  // are counters rather than rates; read the delta, like the display
-  // heartbeat.
+  // Diagnostics. Counters rather than rates - read the delta, like the display
+  // heartbeat. `SystemInfo` does, on a 10 s window of its own, because at a
+  // 2 s refresh a shorter one can only ever see nought or one frame.
   uint32_t frames() const { return frames_; }
   uint8_t fieldsInLastFrame() const { return fields_; }
 

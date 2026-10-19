@@ -37,9 +37,10 @@ sender is one new file rather than a change to four.
 
 ### Entity - `src/core/entity.h`
 
-One reading, one flag, one switch. `NumericEntity`, `BinaryEntity`,
-`SwitchEntity`. Every entity carries its own update time, so staleness is a
-property of the data rather than something each screen has to track.
+One reading, one flag, one switch, one line of text. `NumericEntity`,
+`BinaryEntity`, `SwitchEntity`, `TextEntity`. Every entity carries its own
+update time, so staleness is a property of the data rather than something each
+screen has to track.
 
 - Ids are `domain.thing` and globally unique. `Registry::add` drops duplicates
   with a warning rather than overwriting.
@@ -50,6 +51,13 @@ property of the data rather than something each screen has to track.
   truth.
 - `TemperatureEntity` is a `NumericEntity` that renders in the crew's chosen
   unit. See below - the rule it exists to enforce is worth stating on its own.
+- **`TextEntity` owns its value**, which is the opposite of `id_` and `name_`.
+  Those are compile-time literals the entity holds a pointer to; a text value
+  is built at runtime by whoever publishes it, usually into a stack buffer, so
+  it is copied into the entity's own 32 bytes. It exists for readings that are
+  neither a number nor a flag - an uptime, what answered on the I2C bus, an
+  integration's own words about its link. An empty string is a value; only an
+  entity that has never been set reads as `--`.
 
 ### Clock - `src/core/clock.h`
 
@@ -255,6 +263,34 @@ actually bites:
 Online, Fault - and is separate from entity staleness. A link can be Online
 while a particular reading is stale.
 
+**Two integrations own no device**, and they run in opposite directions.
+`BleBroadcast` reads the registry and puts it on the radio, registering nothing
+(`decisions/0016`). `SystemInfo` fills the registry from the chip - uptime, free
+heap and its low water mark, the LVGL pool, the loop and flush rates, the I2C
+bus, the broadcast's frame rate, and one `TextEntity` per integration carrying
+its link status. Both are Integrations for the same concrete reason: `Hub` gives
+them a loop slice and names them if they ever hold it.
+
+`SystemInfo` is added **last** in `setup()`, and that is load-bearing: its
+`begin()` walks `Hub` to build a link row for everything already registered, so
+an integration added after it gets no row. It also sets its own link to Online
+rather than leaving it Offline, because the header reports the first integration
+that is not Online and an honest "not applicable" there would mask a real fault
+somewhere else.
+
+Its `loop()` is **gated on a counter rather than on the clock**, the same idiom
+`main.cpp` uses for `Clock::tick()` and for the same reason: `millis()` is a
+64-bit division and the loop turns over ~19,000 times a second, so asking it
+every pass was the entire cost of the integration. Measured on hardware
+2026-10-18 - 38,289 loops per heartbeat calling `millis()` every pass, 39,115
+with the gate, against ~41,000 before `SystemInfo` existed. The flush rate did
+not move, which is the number that says the UI is healthy.
+
+One figure there needed its own window. The phone broadcast refreshes every 2 s,
+so a one-second sample can only ever see nought or one frame and the row read 0
+and 60 alternately; `kFrameWindowMs` is 10 s, which is five frames and a stable
+30/min.
+
 ### Hub - `src/core/integration.h`
 
 Owns the list, calls `begin()` once and `loop()` forever. Deliberately tiny. It
@@ -385,9 +421,38 @@ the same way, the rule that matters is that **every cached handle must be
 nulled synchronously in the close path, and the delete must be
 `lv_obj_delete_async()`** - it runs from inside a child's event callback.
 
-Measured on hardware 2026-09-17: the pool sits at 16,388 free / 73% used with
-everything built, drops to 10,844 while the clock setter is open, and returns
-to 16,296 at 2% fragmentation - unchanged after five open/close cycles.
+Measured on hardware 2026-09-17: the pool sat at 16,388 free / 73% used with
+everything built, dropped to 10,844 while the clock setter was open, and
+returned to 16,296 at 2% fragmentation - unchanged after five open/close
+cycles. The resting figure is 14,932 free / 75% used since the System screen
+landed; **the ~5,500 bytes the setter takes is the number that matters**, and
+it is why `decisions/0023` would not spend the pool on that page.
+
+**The System screen is two labels**, on an overlay reached from a button in
+Settings rather than from the nav bar. One column of names, one of
+right-aligned values, one line per entity in `Domain::System`, built from
+`Registry::inDomain` so a later integration's diagnostic appears without the UI
+changing. It is not the generic card rows the domain pages use, and that is a
+measurement: twelve of those rows cost 8.9 KB of the LVGL pool against this
+screen's 3.1 KB, and would not have fitted on one screen. `decisions/0023`.
+
+Two consequences. There is no amber for a stale line here, because colour
+belongs to a widget and these lines are text inside one. And it refreshes from
+`ui::tick()` whenever it is visible rather than from the current page's refresh
+- unlike the Climate detail overlay, which is a child of the page that owns it.
+
+**A generic domain row is not cheap**: a styled card and two labels measured
+about 740 bytes of the pool on hardware. Worth knowing before putting a dozen
+of anything on one of those pages.
+
+`showDomain()` logs the pool on every change of domain, and the reason is that
+**the figure `setup()` logs is not the whole UI**: rows on the generic pages
+are built on first view rather than at boot, so a page nobody has opened costs
+nothing yet. That log is the only thing in the project that can see the
+difference, and `decisions/0013` is explicit that exhausting the pool does not
+report itself. `showDomain()` also refreshes the page it is about to show
+rather than waiting up to a tick for `ui::tick()`, which is what makes the
+figure it then logs true.
 
 The Climate page is tiles, two across, scrolling; tapping one opens a detail
 overlay with the current readings, today's high and low, and a graph of the last
@@ -408,8 +473,13 @@ clear state the callback still needs. It cleared `g_renameMac` once, and every
 rename silently did nothing.
 
 Settings is an overlay above the pages and the nav bar, opened by the gear in
-the header, rather than a fifth domain - the nav bar is about what the van can
-do. See `decisions/0009`.
+the header, rather than a domain of its own - the nav bar is about what the van
+can do. See `decisions/0009`. **System is an overlay above Settings** for the
+same reason, opened by the View button on its System card: it is a domain with
+entities in it, but it is how the van is *doing* rather than what it can do.
+`kNavDomains` therefore holds four of the five domains, and that is deliberate
+rather than the oversight it used to be - `showDomain()` now logs and refuses a
+domain with no page instead of hiding every page and leaving a blank screen.
 
 **The screen timeout switches the backlight fully off, not down.** A dim panel
 at 2am in a van is still a light source. One consequence worth knowing:
@@ -427,8 +497,8 @@ rows are reused for whatever entity lands at that index.
 ## Memory
 
 The tight resource is **internal RAM**, not flash. Measured 2026-10-18:
-1.69 MB of the 3.3 MB app partition (50.5%), **129.5 KB static RAM (39.5%)**,
-and **~74 KB of free heap after boot**. It was 107 KB static and ~97 KB free on
+1.70 MB of the 3.3 MB app partition (50.8%), **127.0 KB static RAM (39.7%)**,
+and **~66 KB of free heap after boot**. It was 107 KB static and ~97 KB free on
 2026-09-07; most of the difference is `LV_MEM_SIZE` going from 48 KB to 64 KB
 (`decisions/0013`) plus 2.8 KB of sensor history, and 2.6 KB of it is the
 phone broadcast (`decisions/0016`).
@@ -437,11 +507,24 @@ Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 64 KB
 pool (`LV_MEM_SIZE`), the NimBLE host, and the BMS task's 8 KB stack - of which
 about 2 KB is actually used, so it is oversized on purpose while there is room.
 
-With every screen built, the LVGL pool sits at **16,388 bytes free, 73% used,
+With every screen built, the LVGL pool sits at **13,252 bytes free, 78% used,
 1% fragmented** (hardware, 2026-10-18, and unchanged by the phone broadcast,
-which creates no LVGL objects). It read 18,940 free and 69% used before the
-clock setter was added; `decisions/0015` is why that screen is built on demand
-rather than kept, and why the figure did not go further.
+which creates no LVGL objects). It read 16,388 free and 73% used before the
+System overlay, and 18,940 free and 69% used before the clock setter was added;
+`decisions/0015` is why that screen is built on demand rather than kept, and
+why the figure did not go further.
+
+**Two things are not in that number.** Rows on the generic domain pages are
+built on first view, so Lighting's cost nothing until somebody opens it; and
+the clock setter allocates ~5,500 bytes while it is open. Those two are why
+`decisions/0023` rejected the obvious shape for the System screen - it would
+have left 6,292 bytes free with the gear reachable from every page.
+
+The worst combination that can actually occur is **Settings plus the clock
+setter at ~7,750 bytes free**. The System overlay cannot be open at the same
+time as the setter, because the Set button is on the Settings card the overlay
+covers. With System open and drawn it is 13,080 free, 79% used, and
+fragmentation held at 1% across 26 s of refreshing its labels at 4 Hz.
 
 ### Wi-Fi does not currently fit
 
@@ -503,10 +586,10 @@ accident of how they were written - it is a constraint, and
 `env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~6 s, 219 cases, no board
+pio test -e native        # ~6 s, 232 cases, no board
 ```
 
-Those nine files are the only ones the test environment compiles. Anything
+Those eleven files are the only ones the test environment compiles. Anything
 they include has to exist on a host compiler, so **a `#include` of a driver, a
 bus or NimBLE inside `src/core/` breaks the tests by construction** - which is
 the point. The rule is the whole reason this layer can be trusted while
@@ -550,7 +633,11 @@ minutes, so a broken core fails while you are still watching.
 - **A new accessory** -> `ADDING_AN_INTEGRATION.md`. One file, one line in
   `setup()`.
 - **A new page** -> add to `Domain`, build it in `src/ui/ui.cpp`, add it to
-  `kNavDomains`. Note that `Domain::System` exists today with no page, so
-  anything registered there is invisible.
+  `kNavDomains` and bump `kNavCount`. A `static_assert` holds those two
+  together. If the domain is not something the van *does*, it probably wants
+  an overlay off Settings instead, the way System does.
+- **A new diagnostic** -> register a `Domain::System` entity from
+  `SystemInfo`, or from whichever integration knows the figure. The System
+  overlay is built from the registry, so it needs no UI change.
 - **A new board** -> `include/board_indicator_d1.h` is the only file that should
   know pin numbers.

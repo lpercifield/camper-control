@@ -170,4 +170,23 @@ const char* Clock::formatStamp(Epoch e, char* buf, size_t len) {
   return buf;
 }
 
+const char* Clock::formatDuration(uint64_t ms, char* buf, size_t len) {
+  if (!buf || len == 0) return "";
+  const uint32_t secs = (uint32_t)(ms / 1000ULL);
+  const uint32_t days = secs / kSecondsPerDay;
+  const uint32_t rem = secs % kSecondsPerDay;
+  // Days are only printed once there are some: "0d 02:17:33" reads like a
+  // field that will never be used, and on a van controller it is the common
+  // case for the first day after every power cut.
+  if (days > 0) {
+    snprintf(buf, len, "%ud %02u:%02u:%02u", (unsigned)days,
+             (unsigned)(rem / 3600), (unsigned)((rem % 3600) / 60),
+             (unsigned)(rem % 60));
+  } else {
+    snprintf(buf, len, "%02u:%02u:%02u", (unsigned)(rem / 3600),
+             (unsigned)((rem % 3600) / 60), (unsigned)(rem % 60));
+  }
+  return buf;
+}
+
 }  // namespace cc

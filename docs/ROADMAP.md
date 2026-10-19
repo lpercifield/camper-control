@@ -16,9 +16,14 @@ which made it the one document nobody could skim for what to do next.
 ## Where it actually is
 
 Runs on hardware. Boots, drives the panel, reads touch, and carries a Settings
-overlay whose values survive a power cycle. Flash 50.5%, static RAM 39.5%,
-**~74 KB free heap**, LVGL pool 73% used, main loop ~21k iterations/sec and
+overlay whose values survive a power cycle. Flash 50.8%, static RAM 39.7%,
+**~66 KB free heap**, LVGL pool 78% used, main loop ~19.6k iterations/sec and
 LVGL 84 flushes/sec, measured 2026-10-18. No integration holds the loop.
+
+**The diagnostics are on the panel.** A System screen, behind the gear, carries
+uptime, free heap and its low water mark, the LVGL pool, the loop and flush
+rates, the I2C bus, the broadcast's frame rate and one line per integration -
+all of which used to need a serial cable. `decisions/0023`.
 
 The battery is live: the BMS connects on a remembered address and reaches
 `online` in about three seconds. Wireless temperature and humidity work - any
@@ -39,11 +44,11 @@ An Android app in `android/` reads that and the sensors directly.
 **The device still cannot store anything durably.** Both routes were closed by
 probe: the microSD slot belongs to the RP2040, and the flash filesystem panics
 the chip while the panel refreshes. Daily highs and lows live in RAM and reset
-on every power cycle. See the work item 3.
+on every power cycle. See the work item 2.
 
 **Every update still needs a cable**, and the framework silently disables the
 bootloader's rollback protection, so shipping a bad image over the air would
-strand a van. Item 6, and `decisions/0020`.
+strand a van. Item 5, and `decisions/0020`.
 
 ## Blockers
 
@@ -51,24 +56,15 @@ None.
 
 ## Do these next
 
-1. **The System page** (1). The diagnostics that shortened most of this
-   project are readable only over a serial cable.
-2. **The RP2040 link** (3). One protocol unlocks durable logging, the audible
+1. **The RP2040 link** (2). One protocol unlocks durable logging, the audible
    alarm and the Grove ports.
-3. **A colour and brightness control** for the light (5, really 9). The
+2. **A colour and brightness control** for the light (4, really 8). The
    firmware side is done and unreachable from the panel.
-4. **Re-arm rollback** (6) before anything else about OTA.
+3. **Re-arm rollback** (5) before anything else about OTA.
 
 ## The work
 
-**1. `Domain::System` has no page.** The enum and `domainName()` know about it;
-`kNavDomains` does not, so anything registered there - uptime, heap, link
-health - is silently invisible. A trap for the next integration author. The
-natural first residents are already written: the loop/flush heartbeat and
-`scanI2C` in `bsp/display.cpp`, plus `BleBroadcast::frames()`, all of which
-are readable today only over a serial cable.
-
-**2. Wi-Fi backhaul is not configurable.** The phone path is done and is BLE,
+**1. Wi-Fi backhaul is not configurable.** The phone path is done and is BLE,
 not Wi-Fi - a phone holds one Wi-Fi association and wireless CarPlay or
 Android Auto already owns it, so a SoftAP would cost the car's screen every
 time (`decisions/0016`). What remains is a backhaul for a van sitting on a
@@ -77,11 +73,11 @@ driveway, where MQTT into Home Assistant is the obvious shape.
 The work is an SSID scan, an on-screen keyboard and credential storage, which
 is two more screens on a pool with limited slack - and one decision that comes
 first: **what the backhaul actually talks to.** Wi-Fi costs ~41 KB against
-~74 KB free, so it fits with ~33 KB to spare; coexistence was never the
+~66 KB free, so it fits with ~25 KB to spare; coexistence was never the
 problem (`decisions/0019`). NVS is not encrypted, so a stored password is
 readable by anyone who can dump the flash (`decisions/0009`).
 
-**3. Nothing can be stored on this device, and the RP2040 is the way out.**
+**2. Nothing can be stored on this device, and the RP2040 is the way out.**
 Two walls, both measured: the microSD slot is wired to the RP2040 and the
 ESP32-S3 has no path to it (`HARDWARE.md`), and the flash filesystem panics
 the chip whenever it is touched while the RGB panel refreshes
@@ -95,12 +91,12 @@ cache to lose; and it is reachable on `RP2040_UART_TX/RX` with PacketSerial
 and COBS. One protocol unlocks durable logging, the audible alarm this device
 still does not have, and the Grove sensors.
 
-**4. The arduino-cli harness is dead weight.** `tools/build.sh` is Linux-only,
+**3. The arduino-cli harness is dead weight.** `tools/build.sh` is Linux-only,
 has drifted further out of step - it knows nothing about `android/`,
 `include/icd.h` or `core/bthome_encode.cpp` - and looks maintained. Delete it
 or put it in CI. `decisions/0006`.
 
-**5. Lighting works on one fixture; the rest is polish.** On, off and colour
+**4. Lighting works on one fixture; the rest is polish.** On, off and colour
 reach a real SP107E driving 30 APA102 pixels, and the switch is operable from
 the Lighting page. `decisions/0022` has the protocol, `0012` why the
 controller lives at the fixture, `0018` the access control these controllers
@@ -110,7 +106,7 @@ What is left:
 
 - **Colour and brightness have no UI.** `Lighting::setColour` and
   `setBrightness` exist and work; nothing on the panel calls them, so the
-  fixture stays on the warm white it boots with. This is really item 9's
+  fixture stays on the warm white it boots with. This is really item 8's
   problem - the generic domain page renders a row and a value, and a light
   wants a picker.
 - **Only one fixture.** The integration tracks a single address, found by the
@@ -125,7 +121,7 @@ What is left:
   RGB, and RGB white is muddy in a cabin; WS2814 is the 12 V RGBW part and
   whether this controller drives it is unconfirmed.
 
-**6. There is no way to update the firmware without a cable.** The partition
+**5. There is no way to update the firmware without a cable.** The partition
 table already supports it and the image is about half a slot, so nothing about
 the flash layout needs changing.
 
@@ -138,7 +134,7 @@ LVGL stopped" experiment; then pick a transport, where SoftAP is the front
 runner. `ARCHITECTURE.md` states the rule and `decisions/0020` has the
 mechanism, the flash-write hazard at scale and the transport comparison.
 
-**7. The phone can only read, and three things want it to write.** Sensor
+**6. The phone can only read, and three things want it to write.** Sensor
 names, the clock and the temperature unit all want to travel from the phone to
 the controller.
 
@@ -170,7 +166,7 @@ This is the first write path, so it reverses the property that makes
 This changes the wire format, so it is an ICD change and a major version bump:
 `ICD.md`.
 
-**8. There is no "time remaining" estimate.** The single number a person
+**7. There is no "time remaining" estimate.** The single number a person
 actually wants - how long the battery lasts at what it is drawing now, as
 `hours:mins`. Everything it needs is published already: `battery.remaining` in
 amp-hours, signed `battery.current` and `battery.power`.
@@ -190,7 +186,7 @@ bytes of thirty-one and BTHome has no object id that honestly means "minutes
 remaining". This is the first feature that forces the choice `decisions/0017`
 deferred: a scan response, payload rotation, or extended advertising.
 
-**9. The app and the controller do not look like the same product.** The
+**8. The app and the controller do not look like the same product.** The
 controller is LVGL - a nav bar across the domains, tiles two across, graphs
 behind them, amber for stale. The app is a single scrolling column written to
 prove the radio worked.
@@ -205,7 +201,7 @@ drift.
 
 Not cosmetic, and not a UI problem: the temperature unit is a global NVS
 setting on the controller while the app always prints Celsius. Consistency
-there is item 7's job.
+there is item 6's job.
 
 ## Smaller things
 
@@ -217,10 +213,12 @@ there is item 7's job.
 - **The LVGL pool has not been measured with the Lighting page populated.**
   `refreshDomainPage` builds rows only for the domain being shown, so the
   figure logged at boot does not include them, and `decisions/0013` is
-  explicit that the pool does not report its own exhaustion. Two rows of four
-  objects is small, and the page has been opened on hardware without a panic,
-  but the number is unmeasured. Logging the pool on a domain change would
-  settle it and belongs on the System page (1).
+  explicit that the pool does not report its own exhaustion. **The instrument
+  now exists** - `showDomain` logs the pool on every change of domain, and the
+  System screen carries it live - so this is now one tap of the Lighting button
+  and one log line, not a piece of work. Expect about 740 bytes per row
+  (`decisions/0023`), so two rows is small; the point is to have the number
+  rather than the estimate.
 - **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
   Wi-Fi and Networking stack to call `WiFi.macAddress()` for the BLE device
   name, and that include is the only reason `platformio.ini` carries the
@@ -235,8 +233,6 @@ there is item 7's job.
   also a legitimate `millis()`. Pinned by `test_entity.cpp:test_epoch_zero`
   rather than fixed; nothing publishes that early, so it has never been
   observable. A separate `everUpdated_` flag is the fix if it ever matters.
-- **Bring-up scaffolding is still in `src/bsp/display.cpp`**: the heartbeat
-  and `scanI2C`. Both are worth keeping, on the System page (1).
 - **`flushCb` rewrites LVGL's buffer in place** to rotate 180 degrees.
   Correct for `RENDER_MODE_PARTIAL` today, but it is a side effect on memory
   LVGL owns and will break quietly if the render mode changes.
@@ -258,13 +254,64 @@ there is item 7's job.
 ## Known and accepted
 
 - **No audible alarm.** The buzzer is on the RP2040 and needs the UART link,
-  which is item 3.
+  which is item 2.
 
 ## Done
 
 Newest first. The detail lives in the record named beside each entry, not
 here.
 
+- **The System screen, and the diagnostics off the serial cable**
+  (2026-10-18). `Domain::System` had no page, so anything registered there was
+  invisible - a trap for the next integration author. It is now an overlay
+  behind the gear, opened from a System card in Settings, and a `SystemInfo`
+  integration publishes uptime, free heap and its low water mark, the LVGL
+  pool, the loop and flush rates, the I2C bus, the phone broadcast's frame
+  rate and one line per integration's link.
+
+  **It is not on the nav bar**, and that is the rule `decisions/0009` already
+  set for Settings: the nav bar is what the van can do, and this is how the
+  van is doing. `kNavDomains` therefore covers four of the five domains on
+  purpose, and `showDomain()` now logs and refuses a domain with no page
+  rather than hiding every page and leaving a blank screen - which is how the
+  original gap would have presented if anything had called it.
+
+  Three things came out of building it.
+
+  **The screen is a text table, not the generic entity rows**, and that was a
+  measurement rather than a preference: twelve of those rows took the LVGL
+  pool from 75% used to **90%, with 6,292 bytes free** against the ~5,500 the
+  clock setter allocates when the gear is tapped - which is `decisions/0013`'s
+  silent exhaustion, one tap away. Two labels cost 3,136 bytes with the
+  overlay's own title bar, and all twelve lines fit on one screen.
+  `decisions/0023` has the four alternatives that were rejected, including
+  growing `LV_MEM_SIZE`, which would have quietly spent the Wi-Fi backhaul's
+  headroom.
+
+  **`SystemInfo::loop()` is gated on a counter, not the clock.** Asking
+  `millis()` every pass - a 64-bit division at ~19,000 passes a second - was
+  the entire cost of the integration: 38,289 loops per heartbeat with the call,
+  39,115 with the gate, against ~41,000 before. The same idiom `main.cpp`
+  already uses for `Clock::tick()`.
+
+  **The phone frame rate needed its own window.** At a 2 s broadcast refresh a
+  one-second sample can only ever see nought or one frame, so the row read 0
+  and 60 alternately on the bench. Ten seconds is five frames and a stable
+  30/min.
+
+  Two new pieces in `src/core/`, both host-tested: `TextEntity` for a reading
+  that is neither a number nor a flag, and `Clock::formatDuration` for an
+  uptime that has to survive the 49-day `millis()` wrap. 232 cases now.
+
+  Verified on hardware 2026-10-18: all four integrations online with link rows
+  reading `connected / listening / connected / advertising`, the I2C row
+  reading `0x20 0x48`, uptime ticking, **flush rate 168 per heartbeat -
+  identical to every measurement since the broadcast landed** - pool 78% used
+  at boot and 79% with the screen drawn, fragmentation holding at 1% across
+  26 s of setting its labels at 4 Hz, heap 66.0 KB, no panics and no slow
+  integration warnings. The worst pool case that can occur is Settings plus
+  the clock setter at ~7,750 bytes free; the System overlay cannot be open
+  alongside the setter, because it covers the card the Set button is on.
 - **Lighting, end to end on one fixture** (2026-10-18). On, off and colour
   reach a real SP107E driving 30 APA102 pixels, and the switch is operable
   from the Lighting page. `core/sp107e.*` is the hardware-free codec with 17
