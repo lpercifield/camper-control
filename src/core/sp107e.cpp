@@ -69,6 +69,13 @@ Sp107eFrame sp107eColourScaled(uint8_t r, uint8_t g, uint8_t b,
               kCmdColour);
 }
 
+bool sp107eColourMatches(const Sp107eState& state, uint8_t r, uint8_t g,
+                         uint8_t b, uint8_t brightness) {
+  if (!state.haveColour) return false;
+  const Sp107eFrame want = sp107eColourScaled(r, g, b, brightness);
+  return state.r == want.b[0] && state.g == want.b[1] && state.b == want.b[2];
+}
+
 bool sp107eFeed(const uint8_t* data, size_t len, Sp107eState& out) {
   if (data == nullptr || len < kMinFrameLen) return false;
 

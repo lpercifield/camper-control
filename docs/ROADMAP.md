@@ -16,9 +16,9 @@ which made it the one document nobody could skim for what to do next.
 ## Where it actually is
 
 Runs on hardware. Boots, drives the panel, reads touch, and carries a Settings
-overlay whose values survive a power cycle. Flash 50.8%, static RAM 39.7%,
-**~66 KB free heap**, LVGL pool 78% used, main loop ~19.6k iterations/sec and
-LVGL 84 flushes/sec, measured 2026-10-18. No integration holds the loop.
+overlay whose values survive a power cycle. Flash 51.1%, static RAM 41.2%,
+**~61 KB free heap**, LVGL pool 80% used, main loop ~19.8k iterations/sec and
+LVGL 84 flushes/sec, measured 2026-10-19. No integration holds the loop.
 
 **The diagnostics are on the panel.** A System screen, behind the gear, carries
 uptime, free heap and its low water mark, the LVGL pool, the loop and flush
@@ -31,9 +31,10 @@ BTHome v2 broadcaster and the SwitchBot W3400010, on a Climate page with
 24-hour graphs, daily highs and lows, and a global °C/°F setting. There is a
 hand-set clock, because the board has no RTC and no NTP.
 
-**A light works.** An SP107E at the fixture drives 30 APA102 pixels on, off
-and to a colour, operable from the Lighting page, with the switch only moving
-when the controller confirms. `decisions/0022`.
+**The lights work.** Up to four SP107E fixtures, each with power, brightness
+and eight colour presets from the Lighting page, and the switch only moves
+when the controller confirms. Which lamp is which is remembered in NVS, so
+"Light 2" survives a power cut. `decisions/0022`, `0024`.
 
 **A phone can read the pack without joining anything.** The van advertises
 state of charge, power, current, voltage and battery temperature as BTHome v2
@@ -58,9 +59,10 @@ None.
 
 1. **The RP2040 link** (2). One protocol unlocks durable logging, the audible
    alarm and the Grove ports.
-2. **A colour and brightness control** for the light (4, really 8). The
-   firmware side is done and unreachable from the panel.
-3. **Re-arm rollback** (5) before anything else about OTA.
+2. **Re-arm rollback** (5) before anything else about OTA.
+3. **Let the crew rename a fixture** (4). Four lamps called "Light 1" to
+   "Light 4" is the last thing standing between the lighting work and being
+   genuinely usable, and the mechanism already exists for sensors.
 
 ## The work
 
@@ -73,8 +75,11 @@ driveway, where MQTT into Home Assistant is the obvious shape.
 The work is an SSID scan, an on-screen keyboard and credential storage, which
 is two more screens on a pool with limited slack - and one decision that comes
 first: **what the backhaul actually talks to.** Wi-Fi costs ~41 KB against
-~66 KB free, so it fits with ~25 KB to spare; coexistence was never the
-problem (`decisions/0019`). NVS is not encrypted, so a stored password is
+~61 KB free, so it fits with ~20 KB to spare; coexistence was never the
+problem (`decisions/0019`). That margin shrank by 4 KB when the LVGL pool grew
+to hold the Lighting page (`decisions/0025`), and the two screens this item
+needs come out of the same pool - check what the board logs before designing
+them. NVS is not encrypted, so a stored password is
 readable by anyone who can dump the flash (`decisions/0009`).
 
 **2. Nothing can be stored on this device, and the RP2040 is the way out.**
@@ -96,30 +101,37 @@ has drifted further out of step - it knows nothing about `android/`,
 `include/icd.h` or `core/bthome_encode.cpp` - and looks maintained. Delete it
 or put it in CI. `decisions/0006`.
 
-**4. Lighting works on one fixture; the rest is polish.** On, off and colour
-reach a real SP107E driving 30 APA102 pixels, and the switch is operable from
-the Lighting page. `decisions/0022` has the protocol, `0012` why the
-controller lives at the fixture, `0018` the access control these controllers
-do not have.
+**4. Lighting is built; what is left is naming and hardware.** Up to four
+fixtures, each with power, brightness and eight colour presets from the panel,
+slots remembered so a lamp keeps its name across a power cut.
+`decisions/0022` has the protocol, `0012` why the controller lives at the
+fixture, `0018` the access control these controllers do not have, `0024` the
+page.
 
 What is left:
 
-- **Colour and brightness have no UI.** `Lighting::setColour` and
-  `setBrightness` exist and work; nothing on the panel calls them, so the
-  fixture stays on the warm white it boots with. This is really item 8's
-  problem - the generic domain page renders a row and a value, and a light
-  wants a picker.
-- **Only one fixture.** The integration tracks a single address, found by the
-  advertised `0xFFB0`. A second means a small table and deciding which is
-  which, and the three-connection ceiling then binds: the BMS holds one, so
-  two fixtures is the limit before `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` has to
-  go up and pay RAM.
+- **Fixtures are called "Light 1" to "Light 4".** The crew cannot rename them,
+  so which lamp is which has to be learned rather than read. `EnvSensors`
+  already does this for sensors - name keyed by MAC in NVS, edited through the
+  shared text-entry overlay - and the slot MACs lighting now stores are the
+  same key. It is the one thing that would make four fixtures pleasant rather
+  than merely possible.
+- **A fifth fixture has nowhere to go.** `CFG_LIGHTING_MAX_FIXTURES` is 4
+  because each holds a BLE connection and the BMS holds one, against a ceiling
+  of five. Raising it is one line in `platformio.ini` and about 1.2 KB of heap
+  per connection; past six or seven, `decisions/0019` says ESP-NOW is the
+  answer rather than a bigger ceiling.
 - **Per-fixture setup stays in the vendor app.** IC type, segment count and
   LED count are set there once; the firmware reads them back but does not
   write them (`decisions/0022`).
 - **Confirm RGBW before ordering more.** The bench strip is APA102, which is
   RGB, and RGB white is muddy in a cabin; WS2814 is the 12 V RGBW part and
-  whether this controller drives it is unconfirmed.
+  whether this controller drives it is unconfirmed. The "Cool" preset is the
+  one this would improve.
+- **No per-item colour on the swatches.** `lv_buttonmatrix` styles its items
+  together, so the eight presets are named rather than coloured. Tinting each
+  one needs an `LV_EVENT_DRAW_TASK_ADDED` hook; `decisions/0024` has the
+  detail and why the names were enough to ship.
 
 **5. There is no way to update the firmware without a cable.** The partition
 table already supports it and the image is about half a slot, so nothing about
@@ -205,20 +217,35 @@ there is item 6's job.
 
 ## Smaller things
 
-- **The BMS now takes about 20 s to connect at boot, against about 6 s
-  before.** The lighting task competes for the radio during startup and wins
-  the race to connect. It gets there reliably and nothing downstream notices,
-  but it is a real cost of the second connector and nobody has tried to
-  reduce it.
-- **The LVGL pool has not been measured with the Lighting page populated.**
-  `refreshDomainPage` builds rows only for the domain being shown, so the
-  figure logged at boot does not include them, and `decisions/0013` is
-  explicit that the pool does not report its own exhaustion. **The instrument
-  now exists** - `showDomain` logs the pool on every change of domain, and the
-  System screen carries it live - so this is now one tap of the Lighting button
-  and one log line, not a piece of work. Expect about 740 bytes per row
-  (`decisions/0023`), so two rows is small; the point is to have the number
-  rather than the estimate.
+- **The BMS sometimes does not connect at boot at all, and nobody knows why.**
+  It was recorded here as "about 20 s, reliably" against about 6 s before the
+  lighting connector existed. That was too generous. Measured 2026-10-19 over
+  three boots each, 60 s of log apiece:
+
+  | | with one fixture (committed) | with the four-fixture build |
+  |---|---|---|
+  | boot 1 | online at 21.0 s | online at 24.5 s |
+  | boot 2 | **never** | **never** |
+  | boot 3 | **never** | **never** |
+
+  **The two builds behave identically, so this is not the lighting work's
+  doing** - that comparison is the only reason it is written down here rather
+  than guessed at. The scanner log says the BMS is not being starved either:
+  it holds its own pause (`paused=0x01`) and retries, so it is reaching the
+  radio and the connect itself is failing. Whether the cause is this board,
+  this BMS, or a BLE stack interaction is unobserved. It recovers on a later
+  attempt or a reboot, and every other integration is unaffected.
+
+  Worth instrumenting before theorising: `BleSerialClient` logs nothing per
+  attempt, so there is no evidence about what the failure actually is. That is
+  the next step, not a fix.
+- **The generic domain page's rows are still unmeasured, and still lazy.**
+  Water is the only domain left using it, and it has no entities, so nothing
+  builds a row today. `refreshDomainPage` builds them on first view, so the
+  boot figure would not include them; `showDomain` logs the pool on every
+  change of domain, which is the instrument. Budget about 740 bytes a row
+  (`decisions/0023`) and remember a row is not far off a whole Lighting page
+  (`0024`).
 - **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
   Wi-Fi and Networking stack to call `WiFi.macAddress()` for the BLE device
   name, and that include is the only reason `platformio.ini` carries the
@@ -261,6 +288,51 @@ there is item 6's job.
 Newest first. The detail lives in the record named beside each entry, not
 here.
 
+- **Four light fixtures, with colour and brightness on the panel**
+  (2026-10-19). `CFG_LIGHTING_MAX_FIXTURES` fixtures, each holding its own
+  BLE connection, each with power, a brightness slider and eight colour
+  presets. `decisions/0024` is the page, `0025` the pool it needed.
+
+  **Which lamp is which is remembered.** Slot MACs go in NVS, so "Light 2" is
+  the same lamp after a power cut - without that the scanner's arrival order
+  would rename every lamp on every boot, which is worse than not naming them.
+  It paid off twice: a remembered fixture connects in **2.1 s** against about
+  6 s, because it skips the scan entirely. Settings has a Forget for when a
+  fixture is swapped.
+
+  **Colour is eight presets, not a picker**, and that is a constraint as much
+  as a choice: LVGL 9.2 dropped the colour wheel, a canvas big enough to pick
+  from costs more RAM than the board has, and an arc hue ring is the
+  `lv_draw_sw_mask_radius_init` boot loop by construction.
+  `core/light_presets.*` is the palette, host-tested, and `decisions/0024`
+  has the argument that it is the better control for a van anyway.
+
+  Brightness is still scaling, not a command, and that reaches the screen:
+  the controller reports the *product* of colour and brightness, so the base
+  colour cannot be read back. `sp107eColourMatches` asks the question that can
+  be answered - "is what it reports what we would have sent" - and a fixture
+  somebody changed from the vendor app gets no swatch rather than a wrong one.
+
+  **Two things the measurements forced.** The obvious layout - a row per
+  fixture with a detail overlay - took the pool to **100% used, 380 bytes
+  free**, surviving only because no arc was on screen to allocate its mask.
+  One shared control set is 4,212 bytes and does not grow with the fixture
+  count. Even then the peak needed `LV_MEM_SIZE` at 68 KB, which restores the
+  margin that existed before this feature rather than improving on it.
+
+  **One bug the bench found, not the diff.** `Lighting::loop()` runs on the
+  main loop and its body was four atomic read-modify-writes; at ~17,000 passes
+  a second that cost **14% of the loop rate**, 39,115 per heartbeat down to
+  33,729, while the flush rate stayed at 168 and the log looked healthy.
+  Gated on a counter, which is the idiom `ADDING_AN_INTEGRATION.md` already
+  told the next author to use - it just had not said that atomics count too.
+
+  Verified on hardware 2026-10-19: fixture remembered and connected in 2.8 s,
+  BMS and sensors online alongside it, **flush rate 168 per heartbeat and
+  loops 39,686 - both back at baseline** - pool 12,668 free / 80% used / 1%
+  fragmented, heap 61.1 KB, no panics and no slow-integration warnings. 246
+  host tests. The BMS startup flakiness under Smaller things was measured
+  against the committed build too and is **not** this work's doing.
 - **The System screen, and the diagnostics off the serial cable**
   (2026-10-18). `Domain::System` had no page, so anything registered there was
   invisible - a trap for the next integration author. It is now an overlay

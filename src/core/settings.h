@@ -42,6 +42,22 @@ class Settings {
   void setSensorName(const char* mac, const char* name);
   void clearSensorName(const char* mac);
 
+  // ---- Lighting ----
+  // Which fixture sits in which slot, so "Light 2" is the same lamp after a
+  // power cut. Without this, slots fill in whatever order the scanner happens
+  // to hear the fixtures and the names move between lamps on every boot -
+  // which is worse than not naming them at all, because the crew would learn
+  // the wrong one. Same role CFG_BMS_MAC's saved counterpart plays.
+  //
+  // Main loop only, like every other write here. `Lighting` discovers on its
+  // own task and hands the address over in its `loop()`.
+  const char* lightMac(size_t slot) const;
+  bool hasLightMac(size_t slot) const;
+  void setLightMac(size_t slot, const char* mac);
+  // Re-pair everything. For a fixture that has been swapped or moved between
+  // rooms, where the slot order is now a lie the crew cannot otherwise fix.
+  void clearLightMacs();
+
   // ---- Display ----
   uint8_t brightness() const { return brightness_; }
   // persist=false while a slider is being dragged; the caller commits once on
@@ -81,6 +97,7 @@ class Settings {
   bool open_ = false;
 
   char bmsMac_[kMacLen] = {0};
+  char lightMac_[CFG_LIGHTING_MAX_FIXTURES][kMacLen] = {{0}};
   uint8_t brightness_ = CFG_BACKLIGHT_DEFAULT;
   uint32_t timeoutMs_ = CFG_BACKLIGHT_IDLE_MS;
 

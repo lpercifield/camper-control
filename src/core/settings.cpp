@@ -11,6 +11,13 @@ constexpr const char* kKeyTimeout = "timeout";
 constexpr const char* kKeyTempUnit = "tunit";
 constexpr const char* kKeyClock = "clock";
 
+// Light slots are "l0".."l7". A slot index rather than the MAC, because the
+// slot *is* the identity here - the whole point is that slot 2 keeps meaning
+// the same lamp - and because NVS keys stop at 15 characters.
+void lightKey(size_t slot, char* out, size_t len) {
+  snprintf(out, len, "l%u", (unsigned)slot);
+}
+
 // NVS keys are limited to 15 characters, so a MAC cannot be stored with its
 // colons: "n" plus twelve hex digits is thirteen, which fits with room to
 // spare. Anything longer is silently truncated by NVS, which would make two
@@ -55,6 +62,37 @@ void Settings::setSensorName(const char* mac, const char* name) {
 
 void Settings::clearSensorName(const char* mac) { setSensorName(mac, nullptr); }
 
+const char* Settings::lightMac(size_t slot) const {
+  if (slot >= CFG_LIGHTING_MAX_FIXTURES) return "";
+  return lightMac_[slot];
+}
+
+bool Settings::hasLightMac(size_t slot) const { return lightMac(slot)[0] != '\0'; }
+
+void Settings::setLightMac(size_t slot, const char* mac) {
+  if (slot >= CFG_LIGHTING_MAX_FIXTURES || mac == nullptr || *mac == '\0') return;
+  if (strcmp(mac, lightMac_[slot]) == 0) return;  // no flash write for a no-op
+  strncpy(lightMac_[slot], mac, kMacLen);
+  lightMac_[slot][kMacLen - 1] = '\0';
+  if (open_) {
+    char key[16];
+    lightKey(slot, key, sizeof(key));
+    prefs_.putString(key, lightMac_[slot]);
+  }
+  log_i("settings: light slot %u is %s", (unsigned)slot, lightMac_[slot]);
+}
+
+void Settings::clearLightMacs() {
+  for (size_t i = 0; i < CFG_LIGHTING_MAX_FIXTURES; i++) {
+    lightMac_[i][0] = '\0';
+    if (!open_) continue;
+    char key[16];
+    lightKey(i, key, sizeof(key));
+    prefs_.remove(key);
+  }
+  log_i("settings: forgot every light slot");
+}
+
 Settings& Settings::instance() {
   static Settings s;
   return s;
@@ -67,6 +105,11 @@ void Settings::begin() {
     return;
   }
   prefs_.getString(kKeyBmsMac, bmsMac_, sizeof(bmsMac_));
+  for (size_t i = 0; i < CFG_LIGHTING_MAX_FIXTURES; i++) {
+    char key[16];
+    lightKey(i, key, sizeof(key));
+    prefs_.getString(key, lightMac_[i], kMacLen);
+  }
   brightness_ = prefs_.getUChar(kKeyBright, CFG_BACKLIGHT_DEFAULT);
   timeoutMs_ = prefs_.getULong(kKeyTimeout, CFG_BACKLIGHT_IDLE_MS);
 

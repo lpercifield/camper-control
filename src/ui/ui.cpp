@@ -9,11 +9,13 @@
 #include "core/integration.h"
 #include "core/registry.h"
 #include "core/clock.h"
+#include "core/light_presets.h"
 #include "core/datalog.h"
 #include "core/settings.h"
 #include "core/units.h"
 #include "integrations/bms_jbd.h"
 #include "integrations/env_sensors.h"
+#include "integrations/lighting.h"
 #include "ui/theme.h"
 
 namespace cc {
@@ -58,6 +60,7 @@ lv_obj_t* g_navButtons[kNavCount] = {nullptr};
 // reached from the gear in the header.
 lv_obj_t* g_settings = nullptr;
 lv_obj_t* g_setBmsValue = nullptr;
+lv_obj_t* g_setLightsValue = nullptr;
 lv_obj_t* g_setBrightValue = nullptr;
 lv_obj_t* g_timeoutButtons[5] = {nullptr};
 lv_obj_t* g_unitButtons[2] = {nullptr};
@@ -151,6 +154,23 @@ DateTime g_clockEdit;
 // Climate: why the log is or is not running.
 lv_obj_t* g_climateStatus = nullptr;
 
+// Lighting: a fixture selector and **one** set of controls that acts on
+// whichever fixture is selected. See buildLightingPage() for why it is not a
+// row per fixture.
+lv_obj_t* g_lightPicker = nullptr;
+lv_obj_t* g_lightSummary = nullptr;
+lv_obj_t* g_lightState = nullptr;
+lv_obj_t* g_lightSwitch = nullptr;
+lv_obj_t* g_lightBright = nullptr;
+lv_obj_t* g_lightSlider = nullptr;
+lv_obj_t* g_lightSwatches = nullptr;
+lv_obj_t* g_lightEmpty = nullptr;
+// The cards, so they can be hidden wholesale when there is no fixture to
+// control. Nothing else needs them after they are built.
+lv_obj_t* g_lightCards[3] = {nullptr};
+// Which fixture the controls are acting on.
+size_t g_lightSlot = 0;
+
 // System: an overlay opened from Settings, and the whole of it is two labels.
 // See buildSystem().
 lv_obj_t* g_system = nullptr;
@@ -170,15 +190,32 @@ static_assert(sizeof(kNavDomains) / sizeof(kNavDomains[0]) == kNavCount,
 
 // ---- small helpers ----------------------------------------------------------
 
+// **One shared style, not five local properties.** Every
+// `lv_obj_set_style_*()` call grows that object's own property array in the
+// LVGL pool; a shared `lv_style_t` is allocated once and every card holds a
+// reference to it. With about thirty cards in the UI that is the cheapest
+// pool saving available, and `decisions/0023` named it as the real fix for
+// the generic row before the Lighting page made it necessary.
+//
+// Callers may still override: a local property set afterwards wins over the
+// shared style, which is how the rows that want a bottom margin get one.
 lv_obj_t* makeCard(lv_obj_t* parent, int x, int y, int w, int h) {
+  static lv_style_t cardStyle;
+  static bool init = false;
+  if (!init) {
+    lv_style_init(&cardStyle);
+    lv_style_set_bg_color(&cardStyle, colCard());
+    lv_style_set_border_color(&cardStyle, colCardEdge());
+    lv_style_set_border_width(&cardStyle, 1);
+    lv_style_set_radius(&cardStyle, 10);
+    lv_style_set_pad_all(&cardStyle, 8);
+    init = true;
+  }
+
   lv_obj_t* c = lv_obj_create(parent);
   lv_obj_set_pos(c, x, y);
   lv_obj_set_size(c, w, h);
-  lv_obj_set_style_bg_color(c, colCard(), 0);
-  lv_obj_set_style_border_color(c, colCardEdge(), 0);
-  lv_obj_set_style_border_width(c, 1, 0);
-  lv_obj_set_style_radius(c, 10, 0);
-  lv_obj_set_style_pad_all(c, 8, 0);
+  lv_obj_add_style(c, &cardStyle, 0);
   lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
   return c;
 }
@@ -204,6 +241,19 @@ void refreshSettings() {
 
   lv_label_set_text(g_setBmsValue,
                     st.hasBmsMac() ? st.bmsMac() : "none saved");
+
+  size_t lights = 0;
+  for (size_t i = 0; i < Lighting::kMaxFixtures; i++) {
+    if (st.hasLightMac(i)) lights++;
+  }
+  char lightBuf[40];
+  if (lights == 0) {
+    snprintf(lightBuf, sizeof(lightBuf), "none saved");
+  } else {
+    snprintf(lightBuf, sizeof(lightBuf), "%u of %u slots used",
+             (unsigned)lights, (unsigned)Lighting::kMaxFixtures);
+  }
+  lv_label_set_text(g_setLightsValue, lightBuf);
 
   char buf[16];
   snprintf(buf, sizeof(buf), "%d%%", (int)((st.brightness() * 100 + 127) / 255));
@@ -289,6 +339,21 @@ void tempUnitCb(lv_event_t* e) {
 
 void clearBmsCb(lv_event_t* /*e*/) {
   Settings::instance().clearBmsMac();
+  bsp::wakeBacklight();
+  refreshSettings();
+}
+
+void clearLightsCb(lv_event_t* /*e*/) {
+  // Only the slot assignments, which is all that is stored. The fixtures are
+  // found again by scanning within seconds - what this throws away is *which
+  // lamp is Light 1*, and that is the point: it is the only way to fix a slot
+  // order that has become a lie after a fixture was swapped or moved.
+  //
+  // It takes effect at the next boot. The integration reads the slots once in
+  // begin() and the live table keeps the fixtures it already holds, which is
+  // better than dropping four working connections while somebody is standing
+  // in the dark.
+  Settings::instance().clearLightMacs();
   bsp::wakeBacklight();
   refreshSettings();
 }
@@ -485,6 +550,27 @@ void buildSettings(lv_obj_t* scr) {
   lv_obj_add_event_cb(clear, clearBmsCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* clearLabel = makeLabel(clear, "Forget", &lv_font_montserrat_16, colText());
   lv_obj_center(clearLabel);
+
+  // ---- lights ----
+  // Which lamp is in which slot, and the only way to take that back. Named
+  // "Light slots" rather than "Lights" because forgetting them does not turn
+  // anything off or lose a colour - it forgets which fixture was called what.
+  lv_obj_t* lightsCard = makeCard(body, 0, 0, w, 96);
+  lv_obj_t* lightsName = makeLabel(lightsCard, "Light slots",
+                                   &lv_font_montserrat_16, colMuted());
+  lv_obj_align(lightsName, LV_ALIGN_TOP_LEFT, 0, 0);
+  g_setLightsValue = makeLabel(lightsCard, "none saved",
+                               &lv_font_montserrat_20, colText());
+  lv_obj_align(g_setLightsValue, LV_ALIGN_LEFT_MID, 0, 6);
+
+  lv_obj_t* clearLights = lv_button_create(lightsCard);
+  lv_obj_set_size(clearLights, 92, 40);
+  lv_obj_align(clearLights, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  lv_obj_set_style_radius(clearLights, 8, 0);
+  lv_obj_set_style_bg_color(clearLights, colCardEdge(), 0);
+  lv_obj_add_event_cb(clearLights, clearLightsCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_center(makeLabel(clearLights, "Forget", &lv_font_montserrat_16,
+                          colText()));
 
   // ---- system ----
   // Diagnostics live behind a button rather than on the nav bar: the nav bar
@@ -1439,7 +1525,9 @@ void refreshClimatePage() {
 
 // The generic domain page: one row per entity in the domain, name on the left
 // and value on the right, and a line saying plainly that the domain is waiting
-// for an integration when it holds none. Lighting and Water use it.
+// for an integration when it holds none. Water is the only domain left using
+// it - Lighting outgrew it the moment a light needed a colour, which is what
+// buildLightingPage and the fixture overlay below it are.
 //
 // **A row here is not cheap.** A styled card and two labels measured about
 // 740 bytes of the LVGL pool on hardware, which is why the System screen draws
@@ -1463,6 +1551,346 @@ void buildDomainPage(lv_obj_t* scr, Domain d) {
   g_emptyLabel[(int)d] = makeLabel(p, msg, &lv_font_montserrat_16, colMuted());
   lv_obj_set_style_text_align(g_emptyLabel[(int)d], LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(g_emptyLabel[(int)d]);
+}
+
+// ---- the Lighting page ------------------------------------------------------
+// A fixture selector across the top, then **one** set of controls - power,
+// brightness, colour - acting on whichever fixture is selected.
+//
+// **It is not a row per fixture, and that is a measurement.** The obvious
+// shape was a row each with a detail overlay behind it, the way the Climate
+// page opens a sensor. Built that way and measured on hardware 2026-10-19,
+// four rows cost 6,956 bytes of the LVGL pool and the overlay another 4,712,
+// which took the pool to **100% used with 380 bytes free** - `decisions/0013`
+// exactly, and it only failed to boot loop because no arc happened to be on
+// screen to allocate its mask. One shared control set is a little over 4 KB
+// and needs no overlay at all. `decisions/0024`.
+//
+// It asks the Lighting integration directly rather than reading the registry,
+// which is the **same exception** the Climate page takes for sensors: an array
+// of like things, which the entity model deliberately does not carry. The
+// on/off command still goes through the SwitchEntity, because that contract -
+// command() asks, confirm() moves the value - is the whole reason a light that
+// has gone offline shows what it last reported rather than what we wished for.
+//
+// **The colour control is eight presets, not a picker.** LVGL 9.2 has no
+// colour wheel - dropped after v8 - and the two ways to build one both hit
+// walls this project has already met: a canvas big enough to pick from costs
+// more RAM than the board has spare, and an arc hue ring allocates its mask
+// inside `lv_draw_sw_mask_radius_init`, which is the boot loop in
+// `TROUBLESHOOTING.md`. `core/light_presets.h` has the palette and why it is
+// the better control for a van anyway.
+constexpr int kLtPickY = 0;
+constexpr int kLtPickH = 44;
+constexpr int kLtSumY = kLtPickY + kLtPickH + 4;
+constexpr int kLtCardX = 4;
+constexpr int kLtCardW = 456;
+constexpr int kLtPowerY = kLtSumY + 22;
+constexpr int kLtPowerH = 64;
+constexpr int kLtBrightY = kLtPowerY + kLtPowerH + 8;
+constexpr int kLtBrightH = 78;
+constexpr int kLtColourY = kLtBrightY + kLtBrightH + 8;
+constexpr int kLtColourH = 124;
+constexpr int kLtSwatchCols = 4;
+
+// lv_buttonmatrix keeps the map pointer rather than copying it, so both maps
+// here have static storage - a stack array would be a dangling read on the
+// first draw. The clock setter learned this the same way.
+const char* const kLtPickMap[] = {"1", "2", "3", "4", "5", "6", ""};
+static_assert(sizeof(kLtPickMap) / sizeof(kLtPickMap[0]) >
+                  Lighting::kMaxFixtures,
+              "the picker needs a label per fixture plus the terminator");
+
+void refreshLightingPage();
+
+void lightPickCb(lv_event_t* e) {
+  lv_obj_t* m = (lv_obj_t*)lv_event_get_target(e);
+  const uint32_t id = lv_buttonmatrix_get_selected_button(m);
+  bsp::wakeBacklight();
+  if (id >= Lighting::kMaxFixtures) return;
+  if (!lighting().present(id)) return;
+  g_lightSlot = id;
+  refreshLightingPage();
+}
+
+void lightPowerCb(lv_event_t* e) {
+  lv_obj_t* sw = (lv_obj_t*)lv_event_get_target(e);
+  bsp::wakeBacklight();
+  SwitchEntity* ent = lighting().power(g_lightSlot);
+  if (ent == nullptr) return;
+  const bool want = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  // Put the knob back where the fixture says it is and let confirm() move it.
+  // The switch is a request like every other control in this project; without
+  // this the knob would sit in a position nobody has agreed to yet.
+  if (ent->value()) {
+    lv_obj_add_state(sw, LV_STATE_CHECKED);
+  } else {
+    lv_obj_remove_state(sw, LV_STATE_CHECKED);
+  }
+  if (!ent->command(want)) {
+    log_w("ui: %s refused the command - offline?",
+          Lighting::fixtureName(g_lightSlot));
+  }
+}
+
+void lightBrightCb(lv_event_t* e) {
+  lv_obj_t* slider = (lv_obj_t*)lv_event_get_target(e);
+  bsp::wakeBacklight();
+  // Applied on every drag so it can be judged by eye. Unlike the screen
+  // backlight there is nothing to persist: a fixture is told, and what it is
+  // told is what it keeps.
+  lighting().setBrightness(g_lightSlot, (uint8_t)lv_slider_get_value(slider));
+}
+
+void lightSwatchCb(lv_event_t* e) {
+  lv_obj_t* m = (lv_obj_t*)lv_event_get_target(e);
+  const uint32_t id = lv_buttonmatrix_get_selected_button(m);
+  bsp::wakeBacklight();
+  if (id >= kLightPresetCount) return;
+  const LightPreset& p = kLightPresets[id];
+  lighting().setColour(g_lightSlot, p.r, p.g, p.b);
+}
+
+// Both matrices want the same look: flat, rounded items, accent when checked.
+void styleMatrix(lv_obj_t* m, const lv_font_t* font) {
+  lv_obj_set_style_bg_opa(m, LV_OPA_TRANSP, LV_PART_MAIN);
+  lv_obj_set_style_border_width(m, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(m, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(m, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(m, 6, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(m, colBg(), LV_PART_ITEMS);
+  lv_obj_set_style_text_color(m, colMuted(), LV_PART_ITEMS);
+  lv_obj_set_style_text_font(m, font, LV_PART_ITEMS);
+  lv_obj_set_style_radius(m, 8, LV_PART_ITEMS);
+  lv_obj_set_style_border_width(m, 0, LV_PART_ITEMS);
+  lv_obj_set_style_bg_color(m, colAccent(), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(m, lv_color_black(),
+                              LV_PART_ITEMS | LV_STATE_CHECKED);
+}
+
+void buildLightingPage(lv_obj_t* scr) {
+  lv_obj_t* p = makePage(scr);
+  g_pages[(int)Domain::Lighting] = p;
+
+  // ---- which fixture ----
+  g_lightPicker = lv_buttonmatrix_create(p);
+  lv_buttonmatrix_set_map(g_lightPicker, kLtPickMap);
+  lv_buttonmatrix_set_one_checked(g_lightPicker, true);
+  lv_obj_set_pos(g_lightPicker, kLtCardX, kLtPickY);
+  lv_obj_set_size(g_lightPicker, kLtCardW, kLtPickH);
+  styleMatrix(g_lightPicker, &lv_font_montserrat_16);
+  lv_obj_add_event_cb(g_lightPicker, lightPickCb, LV_EVENT_VALUE_CHANGED,
+                      nullptr);
+
+  // Every fixture at a glance, which is what a single control set otherwise
+  // gives up. One label against four rows of widgets.
+  g_lightSummary = makeLabel(p, "", &lv_font_montserrat_14, colMuted());
+  lv_obj_set_pos(g_lightSummary, kLtCardX + 2, kLtSumY);
+
+  // ---- power ----
+  lv_obj_t* power = makeCard(p, kLtCardX, kLtPowerY, kLtCardW, kLtPowerH);
+  g_lightCards[0] = power;
+  lv_obj_align(makeLabel(power, "Power", &lv_font_montserrat_16, colMuted()),
+               LV_ALIGN_TOP_LEFT, 0, 0);
+  g_lightState = makeLabel(power, "", &lv_font_montserrat_20, colText());
+  lv_obj_align(g_lightState, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+  g_lightSwitch = lv_switch_create(power);
+  lv_obj_set_size(g_lightSwitch, 76, 40);
+  lv_obj_align(g_lightSwitch, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_bg_color(g_lightSwitch, colCardEdge(), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(g_lightSwitch, colAccent(),
+                            LV_PART_INDICATOR | LV_STATE_CHECKED);
+  lv_obj_add_event_cb(g_lightSwitch, lightPowerCb, LV_EVENT_VALUE_CHANGED,
+                      nullptr);
+
+  // ---- brightness ----
+  lv_obj_t* bright = makeCard(p, kLtCardX, kLtBrightY, kLtCardW, kLtBrightH);
+  g_lightCards[1] = bright;
+  lv_obj_align(
+      makeLabel(bright, "Brightness", &lv_font_montserrat_16, colMuted()),
+      LV_ALIGN_TOP_LEFT, 0, 0);
+  g_lightBright = makeLabel(bright, "--", &lv_font_montserrat_16, colText());
+  lv_obj_align(g_lightBright, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+  g_lightSlider = lv_slider_create(bright);
+  lv_obj_set_size(g_lightSlider, kLtCardW - 48, 16);
+  lv_obj_align(g_lightSlider, LV_ALIGN_BOTTOM_MID, 0, -4);
+  // Never to zero: zero sends black, which is indistinguishable from off, and
+  // the switch above is what turns a light off. Same reason the screen
+  // backlight slider stops at 20.
+  lv_slider_set_range(g_lightSlider, 10, 255);
+  lv_obj_set_style_bg_color(g_lightSlider, colCardEdge(), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(g_lightSlider, colAccent(), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(g_lightSlider, colAccent(), LV_PART_KNOB);
+  lv_obj_add_event_cb(g_lightSlider, lightBrightCb, LV_EVENT_VALUE_CHANGED,
+                      nullptr);
+
+  // ---- colour ----
+  lv_obj_t* colour = makeCard(p, kLtCardX, kLtColourY, kLtCardW, kLtColourH);
+  g_lightCards[2] = colour;
+  lv_obj_align(makeLabel(colour, "Colour", &lv_font_montserrat_16, colMuted()),
+               LV_ALIGN_TOP_LEFT, 0, 0);
+
+  // One buttonmatrix rather than eight buttons and eight labels - two objects
+  // against sixteen, the arithmetic that shaped the clock setter too. Filled
+  // from the palette once, into static storage for the reason above.
+  static const char* map[kLightPresetCount + 2];
+  static bool mapBuilt = false;
+  if (!mapBuilt) {
+    size_t w = 0;
+    for (size_t i = 0; i < kLightPresetCount; i++) {
+      map[w++] = kLightPresets[i].name;
+      if ((i + 1) % kLtSwatchCols == 0 && i + 1 < kLightPresetCount) {
+        map[w++] = "\n";
+      }
+    }
+    map[w] = "";
+    mapBuilt = true;
+  }
+
+  g_lightSwatches = lv_buttonmatrix_create(colour);
+  lv_buttonmatrix_set_map(g_lightSwatches, map);
+  lv_obj_set_size(g_lightSwatches, kLtCardW - 32, kLtColourH - 44);
+  lv_obj_align(g_lightSwatches, LV_ALIGN_BOTTOM_MID, 0, 0);
+  styleMatrix(g_lightSwatches, &lv_font_montserrat_16);
+  lv_obj_add_event_cb(g_lightSwatches, lightSwatchCb, LV_EVENT_VALUE_CHANGED,
+                      nullptr);
+
+  g_lightEmpty = makeLabel(p,
+                           "No fixtures yet.\n\nSwitch a light on and it will\n"
+                           "appear here within a few seconds.",
+                           &lv_font_montserrat_16, colMuted());
+  lv_obj_set_style_text_align(g_lightEmpty, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_center(g_lightEmpty);
+}
+
+void refreshLightingPage() {
+  Lighting& lt = lighting();
+
+  // A fixture that has gone for good would otherwise leave the controls
+  // pointing at nothing.
+  if (!lt.present(g_lightSlot)) {
+    for (size_t i = 0; i < Lighting::kMaxFixtures; i++) {
+      if (lt.present(i)) {
+        g_lightSlot = i;
+        break;
+      }
+    }
+  }
+
+  const bool any = lt.presentCount() > 0;
+  for (size_t i = 0; i < 3; i++) {
+    if (any) {
+      lv_obj_remove_flag(g_lightCards[i], LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(g_lightCards[i], LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  if (any) {
+    lv_obj_add_flag(g_lightEmpty, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(g_lightPicker, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(g_lightSummary, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_remove_flag(g_lightEmpty, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_lightPicker, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_lightSummary, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+
+  // ---- the picker, and the summary under it ----
+  char sum[80];
+  size_t so = 0;
+  for (size_t i = 0; i < Lighting::kMaxFixtures; i++) {
+    const bool here = lt.present(i);
+    // A slot with no fixture is hidden rather than disabled: a greyed button
+    // for a lamp that does not exist invites the question "what is wrong with
+    // light 4", and the answer is nothing.
+    if (here) {
+      lv_buttonmatrix_clear_button_ctrl(g_lightPicker, i,
+                                        LV_BUTTONMATRIX_CTRL_HIDDEN);
+    } else {
+      lv_buttonmatrix_set_button_ctrl(g_lightPicker, i,
+                                      LV_BUTTONMATRIX_CTRL_HIDDEN);
+      continue;
+    }
+    if (i == g_lightSlot) {
+      lv_buttonmatrix_set_button_ctrl(g_lightPicker, i,
+                                      LV_BUTTONMATRIX_CTRL_CHECKED);
+    } else {
+      lv_buttonmatrix_clear_button_ctrl(g_lightPicker, i,
+                                        LV_BUTTONMATRIX_CTRL_CHECKED);
+    }
+
+    SwitchEntity* e = lt.power(i);
+    const char* what = !lt.online(i)              ? "offline"
+                       : (e != nullptr && e->value()) ? "on"
+                                                      : "off";
+    if (so < sizeof(sum)) {
+      const int n = snprintf(sum + so, sizeof(sum) - so, "%s%u %s",
+                             so ? "   " : "", (unsigned)(i + 1), what);
+      if (n > 0) so += (size_t)n;
+      if (so >= sizeof(sum)) so = sizeof(sum) - 1;
+    }
+  }
+  lv_label_set_text(g_lightSummary, sum);
+
+  // ---- the selected fixture ----
+  const size_t slot = g_lightSlot;
+  SwitchEntity* sw = lt.power(slot);
+  const bool online = lt.online(slot);
+  const bool on = sw != nullptr && sw->value();
+
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%s  -  %s", Lighting::fixtureName(slot),
+           online ? (on ? "on" : "off") : "offline");
+  lv_label_set_text(g_lightState, buf);
+  lv_obj_set_style_text_color(
+      g_lightState, online ? (on ? colAccent() : colText()) : colWarn(), 0);
+
+  if (on) {
+    lv_obj_add_state(g_lightSwitch, LV_STATE_CHECKED);
+  } else {
+    lv_obj_remove_state(g_lightSwitch, LV_STATE_CHECKED);
+  }
+  // A fixture we cannot reach cannot be commanded, and a control that does
+  // nothing is worse than one that looks unavailable.
+  if (online) {
+    lv_obj_remove_state(g_lightSwitch, LV_STATE_DISABLED);
+    lv_obj_remove_state(g_lightSlider, LV_STATE_DISABLED);
+    lv_obj_remove_state(g_lightSwatches, LV_STATE_DISABLED);
+  } else {
+    lv_obj_add_state(g_lightSwitch, LV_STATE_DISABLED);
+    lv_obj_add_state(g_lightSlider, LV_STATE_DISABLED);
+    lv_obj_add_state(g_lightSwatches, LV_STATE_DISABLED);
+  }
+
+  const uint8_t bright = lt.brightness(slot);
+  snprintf(buf, sizeof(buf), "%d%%", (int)(100.0f * bright / 255.0f + 0.5f));
+  lv_label_set_text(g_lightBright, buf);
+  // Only while nobody is dragging it, or the knob fights the finger.
+  if (!lv_obj_has_state(g_lightSlider, LV_STATE_PRESSED)) {
+    lv_slider_set_value(g_lightSlider, bright, LV_ANIM_OFF);
+  }
+
+  // Exactly one swatch is checked, and only when the fixture has confirmed
+  // that the colour it is showing is the one we sent. A fixture changed from
+  // the vendor app gets no swatch rather than a wrong one - see
+  // sp107eColourMatches, which is the only question the protocol can answer.
+  const uint32_t c = lt.colour(slot);
+  const int active =
+      (online && lt.colourIsOurs(slot))
+          ? lightPresetIndex((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF)
+          : -1;
+  for (size_t i = 0; i < kLightPresetCount; i++) {
+    if ((int)i == active) {
+      lv_buttonmatrix_set_button_ctrl(g_lightSwatches, i,
+                                      LV_BUTTONMATRIX_CTRL_CHECKED);
+    } else {
+      lv_buttonmatrix_clear_button_ctrl(g_lightSwatches, i,
+                                        LV_BUTTONMATRIX_CTRL_CHECKED);
+    }
+  }
 }
 
 // ---- the System overlay -----------------------------------------------------
@@ -1872,6 +2300,9 @@ void refreshCurrentPage() {
     case Domain::Climate:
       refreshClimatePage();
       break;
+    case Domain::Lighting:
+      refreshLightingPage();
+      break;
     default:
       refreshDomainPage(g_current);
       break;
@@ -1930,7 +2361,7 @@ void begin() {
 
   buildHeader(scr);
   buildPowerPage(scr);
-  buildDomainPage(scr, Domain::Lighting);
+  buildLightingPage(scr);
   buildDomainPage(scr, Domain::Water);
   buildClimatePage(scr);
   buildNav(scr);

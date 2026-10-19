@@ -126,9 +126,24 @@
 // control these controllers do not have, and 0022 for the protocol.
 //
 // Off by default: with no fixture in range the integration simply searches,
-// but it also holds a BLE connection when it finds one, and NimBLE allows
-// three. Turn it on when a fixture is actually installed.
+// but it also holds a BLE connection when it finds one. Turn it on when a
+// fixture is actually installed.
 #define CFG_LIGHTING 1
+
+// How many fixtures the van can have. **Each one holds a BLE connection for
+// as long as the van is awake**, which is `decisions/0018`'s mitigation for a
+// controller class with no access control and also what makes a tap instant -
+// so this number plus the BMS's one is the connection budget, and
+// `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` in `platformio.ini` has to be at least
+// that. `lighting.cpp` static_asserts the two against each other rather than
+// trusting this comment.
+//
+// Raising it is cheap but not free. Measured 2026-10-19, going from three
+// connections to five cost 456 bytes of static RAM and ~2.4 KB of heap, which
+// leaves the Wi-Fi backhaul ~23 KB of the ~41 KB it needs. Past that, budget
+// about 1.2 KB of heap per connection and check `decisions/0019` first - at
+// some point ESP-NOW is the answer instead of a bigger ceiling.
+#define CFG_LIGHTING_MAX_FIXTURES 4
 
 // ---- Housekeeping -----------------------------------------------------------
 #define CFG_STALE_AFTER_MS 15000UL  // a value older than this reads as stale

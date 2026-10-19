@@ -65,8 +65,11 @@ reading. No UI code changes.
 - **`loop()` is called upwards of 20,000 times a second**, so "cheap" is not
   the same as free. A single `millis()` per pass is a real tax - it is a 64-bit
   division - and a `log_i()` on a timer inside `loop()` was enough to trip the
-  50 ms guard at 66 ms. Do periodic housekeeping on a counter instead, and log
-  on change rather than on a clock:
+  50 ms guard at 66 ms. **Atomics are on that list too**: four
+  `std::atomic<bool>::exchange()` calls per pass cost `Lighting` 14% of the
+  main loop rate, and the flush rate did not move, so the heartbeat looked
+  healthy while the arithmetic did not. Do periodic housekeeping on a counter
+  instead, and log on change rather than on a clock:
 
   ```cpp
   void loop() override {

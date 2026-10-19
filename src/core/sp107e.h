@@ -73,6 +73,21 @@ struct Sp107eState {
   bool complete() const { return haveOnOff && haveColour; }
 };
 
+// Does the colour the controller is reporting match what we asked it for?
+//
+// **This is the only way to tell**, and the reason it is needed is
+// `sp107eColourScaled`: brightness is applied by scaling the colour, so the
+// device reports the *product* and the base colour and the brightness cannot
+// be separated out of it again. Asking "is the product what our base and our
+// brightness would have produced" is a question that can be answered, and
+// "what colour is it set to" is not.
+//
+// False means somebody else moved it - the vendor app, another phone - so the
+// UI must stop claiming the swatch we last sent is the one that is lit. It is
+// also false before the colour frame has arrived.
+bool sp107eColourMatches(const Sp107eState& state, uint8_t r, uint8_t g,
+                         uint8_t b, uint8_t brightness);
+
 // Folds one notification into `out`, leaving the other frame's fields alone.
 // **Merging rather than replacing is load-bearing**: the two frames arrive as
 // separate notifications a few hundred milliseconds apart, so replacing would

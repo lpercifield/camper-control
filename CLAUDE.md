@@ -6,7 +6,7 @@ this file is the stuff an agent needs loaded before touching anything.
 ## Commands
 
 ```
-pio test -e native                                       # 232 cases, ~5 s
+pio test -e native                                       # 246 cases, ~6 s
 pio run                                                  # compile
 pio run -t upload --upload-port /dev/cu.usbserial-1110   # flash
 $(ls /opt/homebrew/Cellar/platformio/*/libexec/bin/python | head -1) \

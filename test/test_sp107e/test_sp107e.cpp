@@ -182,6 +182,58 @@ static void test_a_refused_frame_leaves_earlier_state_alone(void) {
   TEST_ASSERT_EQUAL_HEX8(0xFF, s.r);
 }
 
+// ---- sp107eColourMatches ----------------------------------------------------
+// The only question the protocol can actually answer about colour. Brightness
+// is applied by scaling, so the device reports the product and the base colour
+// cannot be recovered from it - "is the product what we would have sent" can
+// be checked, "what colour is it" cannot. decisions/0022.
+
+static void test_colour_matches_what_we_asked_at_full_brightness(void) {
+  Sp107eState s;
+  sp107eFeed(kFrame2, sizeof(kFrame2), s);  // FF C8 8C, the warm white
+  TEST_ASSERT_TRUE(sp107eColourMatches(s, 0xFF, 0xC8, 0x8C, 255));
+}
+
+static void test_colour_matches_a_dimmed_request(void) {
+  // What the device would report after being sent warm white at half.
+  const Sp107eFrame want = sp107eColourScaled(0xFF, 0xC8, 0x8C, 128);
+  const uint8_t frame[] = {0x00, 0x02, want.b[0], want.b[1], want.b[2],
+                           0x00, 0x00};
+  Sp107eState s;
+  sp107eFeed(frame, sizeof(frame), s);
+  TEST_ASSERT_TRUE(sp107eColourMatches(s, 0xFF, 0xC8, 0x8C, 128));
+  // The same reading is *not* a match for the same colour at full brightness,
+  // which is what stops a dimmed light reading as undimmed.
+  TEST_ASSERT_FALSE(sp107eColourMatches(s, 0xFF, 0xC8, 0x8C, 255));
+}
+
+static void test_a_colour_somebody_else_set_does_not_match(void) {
+  // The vendor app, or another phone. The UI has to stop claiming our swatch.
+  Sp107eState s;
+  sp107eFeed(kFrame2, sizeof(kFrame2), s);
+  TEST_ASSERT_FALSE(sp107eColourMatches(s, 0x00, 0xFF, 0x3C, 255));
+}
+
+static void test_no_colour_frame_yet_is_not_a_match(void) {
+  // Only the on/off frame has arrived, so there is nothing to compare and
+  // "true" would be a claim we cannot support.
+  Sp107eState s;
+  sp107eFeed(kFrame1On, sizeof(kFrame1On), s);
+  TEST_ASSERT_FALSE(s.haveColour);
+  TEST_ASSERT_FALSE(sp107eColourMatches(s, 0xFF, 0xC8, 0x8C, 255));
+}
+
+static void test_zero_brightness_matches_a_black_reading(void) {
+  const uint8_t frame[] = {0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00};
+  Sp107eState s;
+  sp107eFeed(frame, sizeof(frame), s);
+  // Brightness 0 sends black whatever the base colour is, so any base
+  // matches - which is correct, and why the switch rather than the slider is
+  // what turns a light off.
+  TEST_ASSERT_TRUE(sp107eColourMatches(s, 0xFF, 0xC8, 0x8C, 0));
+  TEST_ASSERT_TRUE(sp107eColourMatches(s, 0x00, 0x50, 0xFF, 0));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_on_and_off_are_the_measured_bytes);
@@ -201,5 +253,10 @@ int main(int, char**) {
   RUN_TEST(test_unknown_frame_index_is_refused);
   RUN_TEST(test_short_and_null_input_are_refused);
   RUN_TEST(test_a_refused_frame_leaves_earlier_state_alone);
+  RUN_TEST(test_colour_matches_what_we_asked_at_full_brightness);
+  RUN_TEST(test_colour_matches_a_dimmed_request);
+  RUN_TEST(test_a_colour_somebody_else_set_does_not_match);
+  RUN_TEST(test_no_colour_frame_yet_is_not_a_match);
+  RUN_TEST(test_zero_brightness_matches_a_black_reading);
   return UNITY_END();
 }

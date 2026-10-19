@@ -1,7 +1,8 @@
 # 0013 - The LVGL pool holds the whole UI, so size it for the whole UI
 
 - **Date:** 2026-09-17
-- **Status:** Accepted
+- **Status:** The 64 KB figure is superseded by 0025 (2026-10-19); the
+  premise, the hazard and the escape hatch below all still stand
 
 ## Context
 

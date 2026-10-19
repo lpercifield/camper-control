@@ -263,6 +263,34 @@ actually bites:
 Online, Fault - and is separate from entity staleness. A link can be Online
 while a particular reading is stale.
 
+**`Lighting` owns up to `CFG_LIGHTING_MAX_FIXTURES` devices**, which makes it
+the first integration holding more than one connection, and three rules come
+with that:
+
+- **That constant is a connection budget, not a display limit.** Each fixture
+  holds a connection for as long as the van is awake - `decisions/0018`'s
+  mitigation for a controller class with no access control, and what makes a
+  tap instant - so it plus the BMS's one must not exceed
+  `CONFIG_BT_NIMBLE_MAX_CONNECTIONS`. `lighting.cpp` static_asserts the two
+  against each other rather than trusting a comment.
+- **At most one connect attempt per pass of its task, round-robin.** A connect
+  pauses the shared scanner and can block for five seconds, so attempting four
+  in one pass would take every other listener off the air for twenty - the
+  starvation the scanner fix of 2026-10-18 was about. `connectCursor_` is what
+  stops one unreachable fixture starving the others.
+- **Slot identity lives in NVS.** A fixture's slot is remembered, so "Light 2"
+  is the same lamp after a power cut; without it the scanner's arrival order
+  would rename every lamp on every boot. Discovery happens on the BLE task and
+  the write happens on the main loop - `needsCommit` is the handover, the same
+  shape as `EnvSensor::needsNameLoad`, and `Lighting::loop()` is the only
+  reason that integration has a non-empty `loop()` at all.
+
+That `loop()` carries a warning worth repeating: **its body is four atomic
+read-modify-writes, and running them on every pass cost 14% of the main loop
+rate** - 39,115 loops per heartbeat down to 33,729, measured 2026-10-19. It is
+gated on a counter now. `millis()` is the usual culprit named in
+`ADDING_AN_INTEGRATION.md`; atomics belong on that list too.
+
 **Two integrations own no device**, and they run in opposite directions.
 `BleBroadcast` reads the registry and puts it on the radio, registering nothing
 (`decisions/0016`). `SystemInfo` fills the registry from the chip - uptime, free
@@ -428,6 +456,22 @@ cycles. The resting figure is 14,932 free / 75% used since the System screen
 landed; **the ~5,500 bytes the setter takes is the number that matters**, and
 it is why `decisions/0023` would not spend the pool on that page.
 
+**The Lighting page is one control set, not one per fixture.** A fixture
+picker across the top, then power, brightness and eight colour presets acting
+on whichever fixture is selected, with a summary line carrying every fixture's
+state. The obvious shape - a row each with a detail overlay - was built first
+and measured at **100% pool used, 380 bytes free**; this one is 4,212 bytes
+and does not grow with the fixture count. `decisions/0024`.
+
+Two things about it generalise. **`lv_buttonmatrix` is how this project
+affords a grid of buttons**: eight presets are one object rather than sixteen,
+the same arithmetic that shaped the clock setter. Its map must have static
+storage, because the widget keeps the pointer rather than copying it - a stack
+array is a dangling read on the first draw. And **`makeCard` shares one
+`lv_style_t`** rather than setting five local properties per card; local
+styles grow a per-object property array, and sharing bought 560 bytes across
+about thirty cards.
+
 **The System screen is two labels**, on an overlay reached from a button in
 Settings rather than from the nav bar. One column of names, one of
 right-aligned values, one line per entity in `Domain::System`, built from
@@ -496,23 +540,25 @@ rows are reused for whatever entity lands at that index.
 
 ## Memory
 
-The tight resource is **internal RAM**, not flash. Measured 2026-10-18:
-1.70 MB of the 3.3 MB app partition (50.8%), **127.0 KB static RAM (39.7%)**,
-and **~66 KB of free heap after boot**. It was 107 KB static and ~97 KB free on
+The tight resource is **internal RAM**, not flash. Measured 2026-10-19:
+1.71 MB of the 3.3 MB app partition (51.1%), **131.8 KB static RAM (41.2%)**,
+and **~61 KB of free heap after boot**. It was 107 KB static and ~97 KB free on
 2026-09-07; most of the difference is `LV_MEM_SIZE` going from 48 KB to 64 KB
 (`decisions/0013`) plus 2.8 KB of sensor history, and 2.6 KB of it is the
 phone broadcast (`decisions/0016`).
 
-Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 64 KB
-pool (`LV_MEM_SIZE`), the NimBLE host, and the BMS task's 8 KB stack - of which
-about 2 KB is actually used, so it is oversized on purpose while there is room.
+Competing for internal RAM: two 38.4 KB LVGL draw buffers, LVGL's own 68 KB
+pool (`LV_MEM_SIZE`, grown from 64 KB by `decisions/0025`), the NimBLE host -
+whose connection ceiling is five, costing 456 bytes of static RAM and ~2.4 KB
+of heap over the default three - the BMS task's 8 KB stack, of which about
+2 KB is used, and the lighting task's 4 KB.
 
-With every screen built, the LVGL pool sits at **13,252 bytes free, 78% used,
-1% fragmented** (hardware, 2026-10-18, and unchanged by the phone broadcast,
-which creates no LVGL objects). It read 16,388 free and 73% used before the
-System overlay, and 18,940 free and 69% used before the clock setter was added;
-`decisions/0015` is why that screen is built on demand rather than kept, and
-why the figure did not go further.
+With every screen built, the LVGL pool sits at **12,668 bytes free, 80% used,
+1% fragmented** (hardware, 2026-10-19, and unchanged by the phone broadcast,
+which creates no LVGL objects). It read 13,252 free and 78% used before the
+Lighting page, 16,388 and 73% before the System overlay, and 18,940 and 69%
+before the clock setter was added; `decisions/0015` is why that screen is built
+on demand rather than kept, and why the figure did not go further.
 
 **Two things are not in that number.** Rows on the generic domain pages are
 built on first view, so Lighting's cost nothing until somebody opens it; and
@@ -520,11 +566,13 @@ the clock setter allocates ~5,500 bytes while it is open. Those two are why
 `decisions/0023` rejected the obvious shape for the System screen - it would
 have left 6,292 bytes free with the gear reachable from every page.
 
-The worst combination that can actually occur is **Settings plus the clock
-setter at ~7,750 bytes free**. The System overlay cannot be open at the same
-time as the setter, because the Set button is on the Settings card the overlay
-covers. With System open and drawn it is 13,080 free, 79% used, and
-fragmentation held at 1% across 26 s of refreshing its labels at 4 Hz.
+The worst combination that can actually occur is **the Lighting page with the
+clock setter open over it, at 6,884 bytes free and 89% used** - a crew standing
+on that page can reach the gear and then Set. That is what `decisions/0025`
+sized the pool for: it is the margin that existed before the Lighting page
+(6,548 free, 90%), restored rather than improved on. The System overlay cannot
+be open at the same time as the setter, because the Set button is on the
+Settings card the overlay covers.
 
 ### Wi-Fi does not currently fit
 
@@ -580,16 +628,17 @@ at scale, and the transport comparison.
 ## `src/core/` runs on a laptop
 
 `entity.cpp`, `registry.cpp`, `alarms.cpp`, `bthome.cpp`,
-`bthome_encode.cpp`, `switchbot.cpp`, `sp107e.cpp`, `units.cpp`,
-`history.cpp`, `clock.cpp` and `datalog.cpp` contain no hardware. That is not an
+`bthome_encode.cpp`, `switchbot.cpp`, `sp107e.cpp`, `light_presets.cpp`,
+`units.cpp`, `history.cpp`, `clock.cpp` and `datalog.cpp` contain no
+hardware. That is not an
 accident of how they were written - it is a constraint, and
 `env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~6 s, 232 cases, no board
+pio test -e native        # ~6 s, 246 cases, no board
 ```
 
-Those eleven files are the only ones the test environment compiles. Anything
+Those twelve files are the only ones the test environment compiles. Anything
 they include has to exist on a host compiler, so **a `#include` of a driver, a
 bus or NimBLE inside `src/core/` breaks the tests by construction** - which is
 the point. The rule is the whole reason this layer can be trusted while

@@ -5,8 +5,8 @@
  * Generated from the lv_conf_template.h shipped with LVGL 9.2.2. Only these
  * lines differ from the template's defaults:
  *   - the leading content guard is enabled
- *   - LV_MEM_SIZE stays at the template's 64K (it was cut to 48K, which
- *     was too small once the UI grew - see decisions/0013)
+ *   - LV_MEM_SIZE is 68K against the template's 64K (it was 48K, which was
+ *     too small once the UI grew - see decisions/0013 and 0025)
  *   - LV_USE_LOG 0 to 1        (level stays LV_LOG_LEVEL_WARN)
  *   - LV_LOG_PRINTF 0 to 1     (without it LV_USE_LOG discards every message)
  *   - Montserrat 16/20/28/48 enabled alongside the default 14
@@ -65,14 +65,24 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*Size of the memory available for `lv_malloc()` in bytes (>= 2kB)*/
-    /* Camper Control: back to the template's 64K, from the 48K this project
-     * ran on until 2026-09-17. Every screen is built once at boot and kept,
-     * so the pool holds the whole UI rather than a working set: at 48K, adding
-     * the Climate detail page left 2,556 bytes free and the Power page's SOC
-     * arc then boot-looped the board, because an arc is drawn through a mask
-     * that lv_malloc()s at draw time and nothing checks the result. See
-     * docs/TROUBLESHOOTING.md and docs/decisions/0013. */
-    #define LV_MEM_SIZE (64 * 1024U)          /*[bytes]*/
+    /* Camper Control: 68K. Every screen is built once at boot and kept, so
+     * this pool holds the whole UI rather than a working set, and the failure
+     * mode is silent - at 48K, adding the Climate detail page left 2,556
+     * bytes free and the Power page's SOC arc then boot-looped the board,
+     * because an arc is drawn through a mask that lv_malloc()s at draw time
+     * and nothing checks the result.
+     *
+     * 48K to 64K was decisions/0013 (2026-09-17). 64K to 68K was
+     * decisions/0025 (2026-10-19), when the Lighting page's controls took the
+     * worst case - that page with the clock setter open on top of it - to
+     * 2,920 bytes free and 95% used. The 4K buys back the margin that existed
+     * before it, and no more than that, because every byte here is one the
+     * Wi-Fi backhaul does not get.
+     *
+     * **Read the figure, do not guess it.** setup() logs lv_mem_monitor()
+     * after ui::begin(), and showDomain() logs it on every change of domain.
+     * See docs/TROUBLESHOOTING.md and docs/decisions/0013. */
+    #define LV_MEM_SIZE (68 * 1024U)          /*[bytes]*/
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/
     #define LV_MEM_POOL_EXPAND_SIZE 0
