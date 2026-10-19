@@ -95,7 +95,7 @@
 // phone can read the pack without joining anything. Wi-Fi cannot do this job:
 // a phone holds one Wi-Fi association and wireless CarPlay / Android Auto is
 // already using it, so a SoftAP means the van's readings or the car's screen.
-// See docs/ROADMAP.md design gap 2.
+// See docs/decisions/0016 and docs/ICD.md.
 //
 // Advertising only - **never connectable**. That is what keeps this off the
 // three-connection ceiling the BMS and the lighting plan are already dividing

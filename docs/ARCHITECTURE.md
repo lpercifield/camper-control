@@ -210,8 +210,8 @@ listener on this scanner costs nothing but scan time. **UNVERIFIED:** only one
 connection has ever been open on this board at once.
 
 The one-client limit on the JBD BMS is a property of the battery, not of this
-radio, and the two are easy to confuse - `ROADMAP.md` asserted "one BLE
-connection only" for two days on the strength of it.
+radio, and the two are easy to confuse - this project's own documentation
+asserted "one BLE connection only" for two days on the strength of it.
 
 Connecting is the exception. NimBLE will not connect while scanning and
 `stop()` is asynchronous, so a would-be connector calls `pause()`, waits for
@@ -449,6 +449,25 @@ libraries do not expose - the same wall as `decisions/0004`.
 
 **So NimBLE is a prerequisite for Wi-Fi, not an optimisation.** It returns
 30-40 KB, which is the size of the gap. See `decisions/0003` and `ROADMAP.md`.
+
+## Firmware update, and the trap in front of it
+
+There is no over-the-air update yet, and the reason is a rule rather than
+missing work: **the Arduino core disarms the bootloader's rollback protection
+before `setup()` runs.** `initArduino()` calls two `__attribute__((weak))`
+hooks whose defaults say "this image is fine", so an image that boots and then
+boot loops is marked valid and the device is stuck on it.
+
+This project has shipped exactly that image twice - `decisions/0013` and
+`decisions/0014` both crashed *after* `setup()` began - so this is a
+demonstrated failure, not a theoretical one.
+
+**Any OTA work must override those hooks first**, and mark the image valid
+from the main loop only once the device has proved itself. The health signal
+already exists: `displayLoop`'s heartbeat with `loops` and `flushes` both
+climbing, which is the same definition of alive the debugging protocol in
+`CLAUDE.md` uses. `decisions/0020` has the mechanism, the flash-write hazard
+at scale, and the transport comparison.
 
 ## `src/core/` runs on a laptop
 

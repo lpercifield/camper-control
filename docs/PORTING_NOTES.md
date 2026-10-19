@@ -143,8 +143,8 @@ The original list, for the record:
 - **One connection, and one scanner.** The client tracks a single peer, so a
   second connectable BLE device needs its own client. Worse for the planned
   temperature sensors: the scanner belongs to `BleSerialClient` and stops while
-  connected, so a broadcast-only sensor receives nothing. `ROADMAP.md` carries
-  this as the shared-scanner item.
+  connected, so a broadcast-only sensor receives nothing. Fixed 2026-09-09 by
+  the shared scanner; the contract is in `ARCHITECTURE.md`.
 - **`WiFi.h` is included for one line.** `bms_jbd.cpp` pulls in the whole Wi-Fi
   and Networking stack to call `WiFi.macAddress()` for the BLE device name, and
   that is the only reason `platformio.ini` carries the `Network` workaround.

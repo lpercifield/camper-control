@@ -9,8 +9,8 @@ namespace cc {
 //
 // Why a broadcast and not a GATT server: a phone holds exactly one Wi-Fi
 // association and wireless CarPlay / Android Auto already owns it, which is
-// what ruled out the SoftAP this project had planned (`ROADMAP.md` design gap
-// 2). BLE has no such exclusivity - but a *connection* would spend one of
+// what ruled out the SoftAP this project had planned (`decisions/0016`).
+// BLE has no such exclusivity - but a *connection* would spend one of
 // NimBLE's three slots, which the BMS and the lighting plan in
 // `decisions/0012` have already divided up. Advertising spends none, needs no
 // pairing, serves any number of phones at once, and leaves the van with no

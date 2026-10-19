@@ -128,7 +128,7 @@ uint8_t BleBroadcast::publish() {
   // objects distinguished by position - ambiguous to every generic reader, and
   // `bthomeDecode` takes the first of a repeated id by design. Putting them in
   // a volume or mass field to make them fit would be a lie about units.
-  // `ROADMAP.md` design gap 2 has the routes that would carry them.
+  // `decisions/0017` weighs the routes that would carry them.
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   if (adv == nullptr) return 0;

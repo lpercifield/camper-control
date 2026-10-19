@@ -12,7 +12,7 @@
 // BTHome rather than a vendor format on purpose: it is open, versioned and
 // published, one decoder covers the Xiaomi tags (pvvx >= 6.0 speaks only
 // BTHome), Shelly BLU and most DIY sensors, and it does not move under us the
-// way a reverse-engineered format can. See `ROADMAP.md` design gap 1.
+// way a reverse-engineered format can. See `decisions/0011`.
 // -----------------------------------------------------------------------------
 
 namespace cc {

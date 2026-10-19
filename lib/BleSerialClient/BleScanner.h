@@ -11,7 +11,7 @@
 // calls setScanCallbacks() last wins. BleSerialClient used to claim it, which
 // meant a second consumer - a BLE temperature sensor - could not register, and
 // worse, the radio stopped scanning entirely once the BMS connected. See
-// `docs/ROADMAP.md` design gap 1 for the measurements.
+// `docs/ARCHITECTURE.md` under BleScanner for the measurements.
 //
 // This owns the scan instead and fans advertisements out to listeners. It keeps
 // scanning while a connection is up, which the controller time-slices happily:

@@ -13,8 +13,8 @@
 // every BTHome-aware tool on a phone reads the van with no app written at all,
 // which is what makes the first increment free to validate. It also keeps iOS
 // open, because BTHome lives in *service* data and iOS will not reliably hand
-// an app manufacturer data behind a background scan filter. See `ROADMAP.md`
-// design gap 2.
+// an app manufacturer data behind a background scan filter. See
+// `decisions/0016`.
 //
 // Two rules this builder enforces rather than trusts the caller with:
 //
