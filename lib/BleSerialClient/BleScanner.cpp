@@ -33,27 +33,30 @@ void BleScanner::loop() {
 
   if (millis() - lastReportMs_ >= 10000) {
     lastReportMs_ = millis();
-    log_i("scanner: adv=%u listeners=%u scanning=%d paused=%d",
+    log_i("scanner: adv=%u listeners=%u scanning=%d paused=0x%02X",
           (unsigned)advCount_, (unsigned)listeners_.size(),
-          (int)(pScan_ != nullptr && pScan_->isScanning()), (int)paused_);
+          (int)(pScan_ != nullptr && pScan_->isScanning()),
+          (unsigned)pauseMask_.load());
   }
 
-  if (paused_) return;
+  if (pauseMask_.load() != 0) return;
   if (pScan_->isScanning()) return;
   if (lastStartMs_ != 0 && millis() - lastStartMs_ < kGapMs) return;
   lastStartMs_ = millis();
   pScan_->start(kWindowMs, false, true);
 }
 
-void BleScanner::pause() {
-  paused_ = true;
+void BleScanner::pause(uint8_t owner) {
+  pauseMask_.fetch_or(owner);
   // Stop now rather than letting the window run out. A disconnect that waits
   // for a 5 s window cost 6,192 ms to reconnect against 3,492 ms without any
   // scanning at all; this is the fix for that.
   if (pScan_ != nullptr && pScan_->isScanning()) pScan_->stop();
 }
 
-void BleScanner::resume() { paused_ = false; }
+void BleScanner::resume(uint8_t owner) {
+  pauseMask_.fetch_and(static_cast<uint8_t>(~owner));
+}
 
 bool BleScanner::scanning() const {
   return pScan_ != nullptr && pScan_->isScanning();

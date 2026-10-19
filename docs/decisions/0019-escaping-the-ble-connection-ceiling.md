@@ -8,7 +8,12 @@
 
 NimBLE allows three connections. The BMS holds one and `decisions/0012` has
 promised the rest to lighting, so two fixtures is the ceiling and a third
-means raising `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` and paying RAM for it. Two
+means raising `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` and paying RAM for it.
+
+(Two simultaneous connections were unverified when this was written. They were
+demonstrated on 2026-10-18 - the BMS and an SP107E held one each with the
+scanner still running - so the ceiling is real arithmetic rather than a
+guess.) Two
 other radios could sidestep that entirely, and both were looked at properly
 enough to be worth recording.
 

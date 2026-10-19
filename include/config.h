@@ -120,5 +120,15 @@
 // holding the BMS connection.
 #define CFG_BLE_BROADCAST_INTERVAL_MS 1000UL
 
+// ---- Lighting ---------------------------------------------------------------
+// A BLE LED controller at each fixture, powered from the 12 V run that already
+// feeds the light. See docs/decisions/0012 for why, 0018 for the access
+// control these controllers do not have, and 0022 for the protocol.
+//
+// Off by default: with no fixture in range the integration simply searches,
+// but it also holds a BLE connection when it finds one, and NimBLE allows
+// three. Turn it on when a fixture is actually installed.
+#define CFG_LIGHTING 1
+
 // ---- Housekeeping -----------------------------------------------------------
 #define CFG_STALE_AFTER_MS 15000UL  // a value older than this reads as stale

@@ -220,6 +220,15 @@ stops the current window immediately rather than letting it expire - a
 disconnect that waited out a 5 s window took 6,192 ms to reconnect against
 3,492 ms with no scanning at all.
 
+**Pause names its owner.** There is more than one connector - the BMS task
+and the lighting task both connect - so `pause()` and `resume()` take an owner
+bit (`kPauseBms`, `kPauseLighting`) and the scanner runs only when the mask is
+empty. It is a bitmask rather than a reference count on purpose: callers
+resume on every pass of their loop without tracking whether they had paused,
+and unbalanced `resume()` calls would drive a counter negative and let one
+connector cancel another's pause. Setting and clearing a bit is idempotent, so
+that cannot happen, and it needs no lock.
+
 **Pause for the attempt, not for the cycle.** A connector that retries must
 `resume()` between attempts. The connect itself needs the radio to itself; the
 waiting does not, and holding the scanner down across a whole retry cycle -
@@ -407,6 +416,14 @@ at 2am in a van is still a light source. One consequence worth knowing:
 `touchReadCb` swallows the touch that wakes a dark screen instead of delivering
 it, because the crew could not have seen what was under their finger.
 
+**The UI may ask, and may not decide.** Tapping a `SwitchEntity` row calls
+`command()`, which hands the request to whoever owns the hardware. It does
+**not** set the value. The row only changes when that owner calls `confirm()`,
+so a fixture that has gone offline keeps showing what it last actually
+reported rather than what somebody wished for. `ui.cpp:onEntityRowClicked` is
+the only place the UI issues a command, and it checks `kind()` first because
+rows are reused for whatever entity lands at that index.
+
 ## Memory
 
 The tight resource is **internal RAM**, not flash. Measured 2026-10-18:
@@ -480,13 +497,13 @@ at scale, and the transport comparison.
 ## `src/core/` runs on a laptop
 
 `entity.cpp`, `registry.cpp`, `alarms.cpp`, `bthome.cpp`,
-`bthome_encode.cpp`, `switchbot.cpp`, `units.cpp`, `history.cpp`,
-`clock.cpp` and `datalog.cpp` contain no hardware. That is not an
+`bthome_encode.cpp`, `switchbot.cpp`, `sp107e.cpp`, `units.cpp`,
+`history.cpp`, `clock.cpp` and `datalog.cpp` contain no hardware. That is not an
 accident of how they were written - it is a constraint, and
 `env:native` in `platformio.ini` enforces it:
 
 ```
-pio test -e native        # ~5 s, 202 cases, no board
+pio test -e native        # ~6 s, 219 cases, no board
 ```
 
 Those nine files are the only ones the test environment compiles. Anything

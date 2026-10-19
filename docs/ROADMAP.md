@@ -26,6 +26,10 @@ BTHome v2 broadcaster and the SwitchBot W3400010, on a Climate page with
 24-hour graphs, daily highs and lows, and a global °C/°F setting. There is a
 hand-set clock, because the board has no RTC and no NTP.
 
+**A light works.** An SP107E at the fixture drives 30 APA102 pixels on, off
+and to a colour, operable from the Lighting page, with the switch only moving
+when the controller confirms. `decisions/0022`.
+
 **A phone can read the pack without joining anything.** The van advertises
 state of charge, power, current, voltage and battery temperature as BTHome v2
 and is never connectable, so it spends none of the three BLE connection slots.
@@ -49,9 +53,10 @@ None.
 
 1. **The System page** (1). The diagnostics that shortened most of this
    project are readable only over a serial cable.
-2. **Lighting** (5). The prerequisite is done and an SP107E is on the bench.
-3. **The RP2040 link** (3). One protocol unlocks durable logging, the audible
+2. **The RP2040 link** (3). One protocol unlocks durable logging, the audible
    alarm and the Grove ports.
+3. **A colour and brightness control** for the light (5, really 9). The
+   firmware side is done and unreachable from the panel.
 4. **Re-arm rollback** (6) before anything else about OTA.
 
 ## The work
@@ -95,36 +100,30 @@ has drifted further out of step - it knows nothing about `android/`,
 `include/icd.h` or `core/bthome_encode.cpp` - and looks maintained. Delete it
 or put it in CI. `decisions/0006`.
 
-**5. Lighting has a page and no integration.** The plan is settled and the
-hardware is not bought: a BLE LED controller at each fixture, powered from the
-12 V run that already feeds it, so an existing run becomes a controllable
-light with no new control wiring (`decisions/0012`).
+**5. Lighting works on one fixture; the rest is polish.** On, off and colour
+reach a real SP107E driving 30 APA102 pixels, and the switch is operable from
+the Lighting page. `decisions/0022` has the protocol, `0012` why the
+controller lives at the fixture, `0018` the access control these controllers
+do not have.
 
-**A controller is now on the bench and the protocol is measured.** On, off,
-colour and the state readback are all verified against a real SP107E driving
-30 APA102 pixels; `decisions/0022` has the command table, the fields located
-in the readback, and the rename byte that must never be sent by accident.
-Brightness is done by scaling RGB, as the vendor app appears to. Budget ~0.2 A
-per fixture of idle draw with the lights off.
+What is left:
 
-What is left is the integration file itself. Two things still gate shipping
-it:
-
-- **Two controllers is the ceiling**, because the BMS holds one of NimBLE's
-  three. A third means raising `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` and paying
-  RAM. **UNVERIFIED:** two simultaneous connections have never been made on
-  this board.
-- **Confirm RGBW before ordering more.** The bench strip is APA102, which is
-  RGB, and RGB white is muddy in a cabin; WS2814 is the 12 V RGBW part and
-  whether this controller drives it is unconfirmed.
+- **Colour and brightness have no UI.** `Lighting::setColour` and
+  `setBrightness` exist and work; nothing on the panel calls them, so the
+  fixture stays on the warm white it boots with. This is really item 9's
+  problem - the generic domain page renders a row and a value, and a light
+  wants a picker.
+- **Only one fixture.** The integration tracks a single address, found by the
+  advertised `0xFFB0`. A second means a small table and deciding which is
+  which, and the three-connection ceiling then binds: the BMS holds one, so
+  two fixtures is the limit before `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` has to
+  go up and pay RAM.
 - **Per-fixture setup stays in the vendor app.** IC type, segment count and
   LED count are set there once; the firmware reads them back but does not
   write them (`decisions/0022`).
-
-These controllers have no access control at all, which `decisions/0018`
-records along with the two mitigations that cost nothing. ESP-NOW and LoRa
-were both evaluated as escapes from the connection ceiling and neither was
-chosen: `decisions/0019`.
+- **Confirm RGBW before ordering more.** The bench strip is APA102, which is
+  RGB, and RGB white is muddy in a cabin; WS2814 is the 12 V RGBW part and
+  whether this controller drives it is unconfirmed.
 
 **6. There is no way to update the firmware without a cable.** The partition
 table already supports it and the image is about half a slot, so nothing about
@@ -210,6 +209,18 @@ there is item 7's job.
 
 ## Smaller things
 
+- **The BMS now takes about 20 s to connect at boot, against about 6 s
+  before.** The lighting task competes for the radio during startup and wins
+  the race to connect. It gets there reliably and nothing downstream notices,
+  but it is a real cost of the second connector and nobody has tried to
+  reduce it.
+- **The LVGL pool has not been measured with the Lighting page populated.**
+  `refreshDomainPage` builds rows only for the domain being shown, so the
+  figure logged at boot does not include them, and `decisions/0013` is
+  explicit that the pool does not report its own exhaustion. Two rows of four
+  objects is small, and the page has been opened on hardware without a panic,
+  but the number is unmeasured. Logging the pool on a domain change would
+  settle it and belongs on the System page (1).
 - **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
   Wi-Fi and Networking stack to call `WiFi.macAddress()` for the BLE device
   name, and that include is the only reason `platformio.ini` carries the
@@ -254,6 +265,33 @@ there is item 7's job.
 Newest first. The detail lives in the record named beside each entry, not
 here.
 
+- **Lighting, end to end on one fixture** (2026-10-18). On, off and colour
+  reach a real SP107E driving 30 APA102 pixels, and the switch is operable
+  from the Lighting page. `core/sp107e.*` is the hardware-free codec with 17
+  host tests pinned against bytes measured on the bench;
+  `integrations/lighting.*` owns a FreeRTOS task, because NimBLE's connect is
+  synchronous and would otherwise freeze the UI for five seconds
+  (`decisions/0008`), and holds the connection, which is `decisions/0018`'s
+  access-control mitigation and also what makes a tap instant.
+
+  Two things had to change underneath it. **The shared scanner's pause is now
+  per-owner**: it was a single bool, and a second connector would have let
+  the BMS resume a scan the lighting task was relying on staying down. A
+  bitmask rather than a count, because callers resume on every pass without
+  tracking whether they paused. And **switch rows on the generic domain page
+  are now tappable** - the handler calls `command()` and never sets the
+  value, so the row still only moves on `confirm()`.
+
+  Verified on hardware 2026-10-18: fixture found in 2.5 s and connected in
+  3.5 s, BMS online alongside it, zero refused or failed writes across the
+  owner's on and off taps, no panics, LVGL pool unchanged at boot. Flush rate
+  84/s on the Power page with both links up, identical to baseline; loops
+  20,488/s against ~21,000; heap 67.3 KB, down 6.7 KB for the task stack and
+  the client.
+
+  **This closes the two-connection question.** The ceiling note said two
+  simultaneous connections had never been made on this board; the BMS and a
+  fixture now hold one each with the scanner still running.
 - **The shared scanner no longer starves while the BMS retries**
   (2026-10-18). It stayed paused across the whole connect cycle - four
   attempts at a 5 s timeout - so every other listener went silent for twenty

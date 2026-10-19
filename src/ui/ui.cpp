@@ -1597,6 +1597,25 @@ void refreshPowerPage() {
   }
 }
 
+// Tapping a switch row asks the integration to change it. **It does not
+// change the entity.** SwitchEntity::command() hands the request to whoever
+// owns the hardware, and the value on screen only moves when that owner calls
+// confirm() - so a fixture that has gone offline keeps showing what it last
+// actually reported rather than what somebody wished for. See
+// `ARCHITECTURE.md` on the Entity contract.
+void onEntityRowClicked(lv_event_t* e) {
+  lv_obj_t* row = static_cast<lv_obj_t*>(lv_event_get_target(e));
+  Entity* ent = static_cast<Entity*>(lv_obj_get_user_data(row));
+  if (ent == nullptr || ent->kind() != EntityKind::Switch) return;
+
+  bsp::wakeBacklight();
+  SwitchEntity* sw = static_cast<SwitchEntity*>(ent);
+  const bool want = !sw->value();
+  if (!sw->command(want)) {
+    log_w("ui: %s refused the command - offline?", sw->id());
+  }
+}
+
 void refreshDomainPage(Domain d) {
   lv_obj_t* list = g_entityList[(int)d];
   Registry& reg = Registry::instance();
@@ -1619,6 +1638,11 @@ void refreshDomainPage(Domain d) {
     lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_t* value = makeLabel(row, "", &lv_font_montserrat_20, colText());
     lv_obj_align(value, LV_ALIGN_RIGHT_MID, 0, 0);
+    // Attached to every row, not only the switches: which entity sits in a
+    // row changes as integrations register, and the handler checks the kind
+    // before it does anything. One callback costs far less than rebuilding
+    // rows when a domain gains a switch - see decisions/0013 on the pool.
+    lv_obj_add_event_cb(row, onEntityRowClicked, LV_EVENT_CLICKED, nullptr);
   }
 
   char buf[40];
@@ -1629,6 +1653,17 @@ void refreshDomainPage(Domain d) {
     lv_label_set_text(name, items[i]->name());
     lv_label_set_text(value, items[i]->format(buf, sizeof(buf)));
     lv_obj_set_style_text_color(value, items[i]->stale() ? colMuted() : colText(), 0);
+
+    // The row carries the entity it is currently showing, because the order
+    // is registration order and a row is reused for whatever lands at that
+    // index.
+    lv_obj_set_user_data(row, items[i]);
+    const bool tappable = items[i]->kind() == EntityKind::Switch;
+    if (tappable) {
+      lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    } else {
+      lv_obj_remove_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    }
   }
 }
 

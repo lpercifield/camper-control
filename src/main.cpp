@@ -17,6 +17,7 @@
 #include "core/integration.h"
 #include "core/settings.h"
 #include "integrations/ble_broadcast.h"
+#include "integrations/lighting.h"
 #include "integrations/bms_jbd.h"
 #include "integrations/env_sensors.h"
 #include "ui/ui.h"
@@ -73,6 +74,11 @@ void setup() {
   cc::Hub& hub = cc::Hub::instance();
   hub.add(&cc::bms());
   hub.add(&cc::envSensors());
+#if CFG_LIGHTING
+  // After the BMS, which brings NimBLE up, and before the broadcaster, which
+  // only reads. This one owns a task and a connection slot.
+  hub.add(&cc::lighting());
+#endif
 #if CFG_BLE_BROADCAST
   // Last on purpose, and the order is load-bearing: this one reads the
   // registry rather than filling it, and it needs NimBLE already up - which

@@ -50,7 +50,7 @@ void BleSerialClient::onDisconnect(NimBLEClient* /*client*/, int reason) {
   peerAddress_.clear();
   // Let the scanner look again. It is the only thing that will re-find the BMS
   // now, since this class no longer drives the scan itself.
-  BleScanner::instance().resume();
+  BleScanner::instance().resume(BleScanner::kPauseBms);
 }
 
 void BleSerialClient::onConnectFail(NimBLEClient* /*client*/, int reason) {
@@ -76,7 +76,7 @@ void BleSerialClient::onAdvertisement(const NimBLEAdvertisedDevice* advertisedDe
   doConnect = true;
   // Ask the scanner to stand down so the connect can proceed; bleLoop waits
   // for it to actually be down before calling connect().
-  BleScanner::instance().pause();
+  BleScanner::instance().pause(BleScanner::kPauseBms);
 }
 
 void BleSerialClient::setTargetAddress(const char* mac) {
@@ -181,7 +181,7 @@ void BleSerialClient::bleLoop() {
   }
 
   if (!doConnect) {
-    BleScanner::instance().resume();
+    BleScanner::instance().resume(BleScanner::kPauseBms);
     return;
   }
 
@@ -191,7 +191,7 @@ void BleSerialClient::bleLoop() {
   // sensors went stale every time the BMS struggled. The connect itself still
   // needs the radio to itself; the gaps do not.
   if (millis() < nextConnectMs) {
-    BleScanner::instance().resume();
+    BleScanner::instance().resume(BleScanner::kPauseBms);
     return;
   }
 
@@ -199,7 +199,7 @@ void BleSerialClient::bleLoop() {
   // asynchronous - it asks the controller to stop and returns. Connecting
   // straight out of the advertisement callback therefore fails every time.
   // Wait for the scan to actually be down.
-  BleScanner::instance().pause();
+  BleScanner::instance().pause(BleScanner::kPauseBms);
   if (BleScanner::instance().scanning()) return;
 
   if (connectToServer()) {
@@ -217,7 +217,7 @@ void BleSerialClient::bleLoop() {
     connectAttempts = 0;  // give up on this address and look again
   }
 
-  if (!doConnect) BleScanner::instance().resume();
+  if (!doConnect) BleScanner::instance().resume(BleScanner::kPauseBms);
 }
 
 bool BleSerialClient::connected() { return bleConnected; }
