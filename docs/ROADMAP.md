@@ -100,23 +100,26 @@ hardware is not bought: a BLE LED controller at each fixture, powered from the
 12 V run that already feeds it, so an existing run becomes a controllable
 light with no new control wiring (`decisions/0012`).
 
-Reference part is the **SP107E**, ~$15, DC5-24 V, up to 960 pixels, rated -20
-to 60 C, service `0xFFE0` and characteristic `0xFFE1`. It reads its own state
-back, so `confirm()` can be honest. The protocol is close to the SP110E's but
-not the same - off is `0xBB` not `0xAB`, colour `0x0C` not `0x1E` - and the
-readback is only partly mapped, so the integration wants a real device in
-hand. Budget ~0.2 A per fixture of idle draw with the lights off.
+**A controller is now on the bench and the protocol is measured.** On, off,
+colour and the state readback are all verified against a real SP107E driving
+30 APA102 pixels; `decisions/0022` has the command table, the fields located
+in the readback, and the rename byte that must never be sent by accident.
+Brightness is done by scaling RGB, as the vendor app appears to. Budget ~0.2 A
+per fixture of idle draw with the lights off.
 
-Two things gate it, now that the scanner starvation that used to be the
-prerequisite is fixed:
+What is left is the integration file itself. Two things still gate shipping
+it:
 
 - **Two controllers is the ceiling**, because the BMS holds one of NimBLE's
   three. A third means raising `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` and paying
   RAM. **UNVERIFIED:** two simultaneous connections have never been made on
   this board.
-- **Confirm RGBW before ordering.** The listed ICs are RGB and RGB white is
-  muddy in a cabin; WS2814 is the 12 V RGBW part and whether this controller
-  drives it is unconfirmed.
+- **Confirm RGBW before ordering more.** The bench strip is APA102, which is
+  RGB, and RGB white is muddy in a cabin; WS2814 is the 12 V RGBW part and
+  whether this controller drives it is unconfirmed.
+- **Per-fixture setup stays in the vendor app.** IC type, segment count and
+  LED count are set there once; the firmware reads them back but does not
+  write them (`decisions/0022`).
 
 These controllers have no access control at all, which `decisions/0018`
 records along with the two mitigations that cost nothing. ESP-NOW and LoRa

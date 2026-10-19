@@ -300,6 +300,16 @@ same interval after it. If you see this symptom again, check
 `BleSerialClient::kRetryScanMs` is still being honoured and that `paused=`
 is not stuck at 1 in the scanner line.
 
+**An SP107E stops advertising its name, or vanishes from the vendor app.**
+Its name has been blanked by a stray `0x03`, which is the rename command -
+format `LEN 00 00 03 [ASCII]`. A four-byte write ending in `0x03` reads as a
+length with no characters following, so the name becomes empty and the
+controller reboots, dropping the connection. The device is otherwise fine and
+still advertises service `0xFFB0` with no name. Recover it by connecting on
+its address and writing the name back, e.g.
+`06 00 00 03 53 50 31 30 37 45` for `SP107E`. Observed 2026-10-18 while
+probing command bytes; `decisions/0022` says why not to probe that way.
+
 **`connect failed, reason 574`** or similar. NimBLE encodes HCI errors as
 `0x200 + code`, so 574 is `0x23e` - HCI `0x3e`, "connection failed to be
 established". It is common and transient; the client retries the connect a few
