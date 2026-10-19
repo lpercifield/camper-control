@@ -117,6 +117,16 @@ class BleSerialClient : public NimBLEClientCallbacks,
   // We already know the address, so retry the connect before paying for a
   // whole rescan cycle.
   static constexpr uint8_t kMaxConnectAttempts = 4;
+  // How long the shared scanner gets between failed connect attempts.
+  //
+  // It is a trade, and the trade is deliberate. A failing BMS costs four
+  // attempts at a 5 s timeout; keeping the scanner paused across the gaps as
+  // well bought about three seconds of reconnect time and cost every other
+  // listener twenty seconds of silence. At this value a failed cycle hands
+  // back roughly 3.6 s of scanning - a dozen or so advertisements at the
+  // ~4/s this board sees - and worst-case reconnect grows by about the same.
+  // Sensors updating is worth more than a reconnect that is already failing.
+  static constexpr uint32_t kRetryScanMs = 1200;
   uint8_t connectAttempts = 0;
   uint32_t nextConnectMs = 0;
 

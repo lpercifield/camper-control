@@ -185,21 +185,32 @@ void BleSerialClient::bleLoop() {
     return;
   }
 
+  // Between attempts the scanner runs. It used to stay paused for the whole
+  // retry cycle, which is four attempts at a 5 s connect timeout - twenty
+  // seconds in which no other listener heard anything, and the temperature
+  // sensors went stale every time the BMS struggled. The connect itself still
+  // needs the radio to itself; the gaps do not.
+  if (millis() < nextConnectMs) {
+    BleScanner::instance().resume();
+    return;
+  }
+
   // NimBLE will not connect while a scan is running, and stop() is
   // asynchronous - it asks the controller to stop and returns. Connecting
   // straight out of the advertisement callback therefore fails every time.
   // Wait for the scan to actually be down.
   BleScanner::instance().pause();
-  if (BleScanner::instance().scanning() || millis() < nextConnectMs) return;
+  if (BleScanner::instance().scanning()) return;
 
   if (connectToServer()) {
     doConnect = false;
     connectAttempts = 0;
     receiveBuffer.clear();
   } else if (++connectAttempts < kMaxConnectAttempts) {
-    // Keep the address and try again shortly. A rescan costs six seconds and
-    // tells us nothing we do not already know.
-    nextConnectMs = millis() + 400;
+    // Keep the address and try again. A rescan costs six seconds and tells us
+    // nothing we do not already know - but hand the radio back in the
+    // meantime, which is what kRetryScanMs is for.
+    nextConnectMs = millis() + kRetryScanMs;
     haveFound = true;
   } else {
     doConnect = false;

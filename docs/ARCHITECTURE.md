@@ -220,6 +220,14 @@ stops the current window immediately rather than letting it expire - a
 disconnect that waited out a 5 s window took 6,192 ms to reconnect against
 3,492 ms with no scanning at all.
 
+**Pause for the attempt, not for the cycle.** A connector that retries must
+`resume()` between attempts. The connect itself needs the radio to itself; the
+waiting does not, and holding the scanner down across a whole retry cycle -
+four attempts at a 5 s timeout - starves every other listener for twenty
+seconds. `BleSerialClient` gets this right via `kRetryScanMs`; it did not
+until 2026-10-18, and the symptom was temperature sensors going stale whenever
+the BMS struggled (`TROUBLESHOOTING.md`).
+
 ### Integration - `src/core/integration.h`
 
 Everything that touches hardware. Three rules, and the first one is the one that

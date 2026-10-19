@@ -289,8 +289,16 @@ failing with HCI `0x3e` retries four times at a 5 s timeout each. A BMS that is
 powered but not answering therefore holds the scanner down for twenty seconds
 at a stretch, and every other listener starves. Observed 2026-09-09:
 `scanning=0 paused=1` for most of a 45 s log, with advertisements down to
-~1.7/s from ~5.5/s. The fix is to resume the scanner between attempts rather
-than across the whole cycle; see `ROADMAP.md`.
+~1.7/s from ~5.5/s.
+
+**Fixed 2026-10-18.** The scanner now runs in the gaps between attempts - the
+connect still needs the radio to itself, the waiting does not. Reproduced on
+the bench by pointing the connect at a deliberately bogus address so it takes
+the full timeout: the advertisement counter sat frozen at 25 across two
+reports 12.5 s apart before the fix, and delivered 19 advertisements over the
+same interval after it. If you see this symptom again, check
+`BleSerialClient::kRetryScanMs` is still being honoured and that `paused=`
+is not stuck at 1 in the scanner line.
 
 **`connect failed, reason 574`** or similar. NimBLE encodes HCI errors as
 `0x200 + code`, so 574 is `0x23e` - HCI `0x3e`, "connection failed to be

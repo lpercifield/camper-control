@@ -47,15 +47,12 @@ None.
 
 ## Do these next
 
-1. **Fix the scanner starvation** (under Smaller things). The only thing
-   actively degrading a feature that works - sensors go stale whenever the BMS
-   struggles to connect - and it gates lighting.
-2. **The System page** (1). The diagnostics that shortened most of this
+1. **The System page** (1). The diagnostics that shortened most of this
    project are readable only over a serial cable.
+2. **Lighting** (5). The prerequisite is done and an SP107E is on the bench.
 3. **The RP2040 link** (3). One protocol unlocks durable logging, the audible
    alarm and the Grove ports.
-4. **Lighting** (5), once the starvation is fixed and a controller is in hand.
-5. **Re-arm rollback** (6) before anything else about OTA.
+4. **Re-arm rollback** (6) before anything else about OTA.
 
 ## The work
 
@@ -110,11 +107,9 @@ not the same - off is `0xBB` not `0xAB`, colour `0x0C` not `0x1E` - and the
 readback is only partly mapped, so the integration wants a real device in
 hand. Budget ~0.2 A per fixture of idle draw with the lights off.
 
-Three things gate it:
+Two things gate it, now that the scanner starvation that used to be the
+prerequisite is fixed:
 
-- **Fix the scanner starvation first** (Smaller things). A second connectable
-  device adds its own connect cycles to a scanner already held down across the
-  BMS's. A prerequisite, not a follow-up.
 - **Two controllers is the ceiling**, because the BMS holds one of NimBLE's
   three. A third means raising `CONFIG_BT_NIMBLE_MAX_CONNECTIONS` and paying
   RAM. **UNVERIFIED:** two simultaneous connections have never been made on
@@ -212,12 +207,6 @@ there is item 7's job.
 
 ## Smaller things
 
-- **A BMS that cannot connect starves every other BLE listener.**
-  `BleSerialClient` pauses the shared scanner across the whole connect cycle -
-  four attempts at a 5 s timeout - so the scanner can sit paused for twenty
-  seconds and temperature readings go stale. The fix is to resume between
-  attempts rather than across the cycle. `TROUBLESHOOTING.md`. **Do this
-  first**; it gates item 5.
 - **`WiFi.h` is included for a single line.** `bms_jbd.cpp` pulls in the whole
   Wi-Fi and Networking stack to call `WiFi.macAddress()` for the BLE device
   name, and that include is the only reason `platformio.ini` carries the
@@ -262,6 +251,14 @@ there is item 7's job.
 Newest first. The detail lives in the record named beside each entry, not
 here.
 
+- **The shared scanner no longer starves while the BMS retries**
+  (2026-10-18). It stayed paused across the whole connect cycle - four
+  attempts at a 5 s timeout - so every other listener went silent for twenty
+  seconds whenever the BMS struggled, and the temperature sensors went stale.
+  It now runs in the gaps; the connect itself still needs the radio.
+  Reproduced on the bench by connecting to a deliberately bogus address:
+  0 advertisements in 12.5 s of retrying before, 19 after. This was the
+  prerequisite for lighting. `ARCHITECTURE.md`, `TROUBLESHOOTING.md`.
 - **The roadmap rewritten to be work rather than findings** (2026-10-18).
   A thousand lines of analysis moved into `decisions/0018` through `0021`,
   `ICD.md` and `ARCHITECTURE.md`. Nothing was deleted without a home.
